@@ -43,12 +43,24 @@ def execute_analysis(code: str, dataframes: Dict[str, pd.DataFrame], user_instru
 
 def display_analysis_results(analysis_results: Dict[str, Any]):
     """
-    Display analysis results in a user-friendly format
+    Display analysis results in a user-friendly format with safe None handling
     """
     st.subheader("📊 Data Quality Analysis Results")
     
-    # Summary metrics
-    if 'summary' in analysis_results:
+    # ✅ SAFE CHECK: Handle None or empty analysis_results
+    if not analysis_results:
+        st.warning("⚠️ No analysis results available to display.")
+        st.info("Please run the data analysis first to generate results.")
+        return
+    
+    # ✅ SAFE CHECK: Ensure analysis_results is a dictionary
+    if not isinstance(analysis_results, dict):
+        st.error("❌ Invalid analysis results format. Expected dictionary.")
+        st.write(f"Received: {type(analysis_results)}")
+        return
+    
+    # Summary metrics - SAFELY CHECK FOR 'summary' KEY
+    if analysis_results.get('summary'):
         summary = analysis_results['summary']
         
         col1, col2, col3, col4 = st.columns(4)
@@ -62,47 +74,61 @@ def display_analysis_results(analysis_results: Dict[str, Any]):
         with col4:
             st.metric("Duplicates", summary.get('total_duplicates', 0))
     
-    # Sheet-level analysis
+    # Sheet-level analysis - SAFELY ITERATE THROUGH RESULTS
     for sheet_name, sheet_analysis in analysis_results.items():
         if sheet_name == 'summary':
+            continue
+        
+        # ✅ SAFE CHECK: Ensure sheet_analysis is a dictionary
+        if not isinstance(sheet_analysis, dict):
+            st.warning(f"⚠️ Skipping {sheet_name}: Invalid analysis format")
             continue
             
         with st.expander(f"📋 {sheet_name} Analysis", expanded=True):
             
-            # Missing values chart
-            if 'missing_analysis' in sheet_analysis:
-                missing_data = sheet_analysis['missing_analysis']
-                if any(missing_data.values()):
-                    st.subheader("Missing Values")
+            # Missing values chart - SAFE CHECK
+            missing_data = sheet_analysis.get('missing_analysis', {})
+            if missing_data and any(missing_data.values()):
+                st.subheader("Missing Values")
+                try:
                     fig = px.bar(
                         x=list(missing_data.keys()),
                         y=list(missing_data.values()),
                         title="Missing Values by Column"
                     )
                     st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not display missing values chart: {str(e)}")
             
-            # Outliers
-            if 'outliers' in sheet_analysis:
-                outliers = sheet_analysis['outliers']
-                if outliers:
-                    st.subheader("Outliers Detected")
-                    outlier_df = pd.DataFrame(outliers)
-                    st.dataframe(outlier_df)
+            # Outliers - SAFE CHECK
+            outliers = sheet_analysis.get('outliers', [])
+            if outliers:
+                st.subheader("Outliers Detected")
+                try:
+                    if isinstance(outliers, list) and outliers:
+                        outlier_df = pd.DataFrame(outliers)
+                        st.dataframe(outlier_df)
+                    elif isinstance(outliers, dict):
+                        st.json(outliers)
+                    else:
+                        st.write(outliers)
+                except Exception as e:
+                    st.warning(f"Could not display outliers: {str(e)}")
             
-            # Data quality issues
-            if 'quality_issues' in sheet_analysis:
-                issues = sheet_analysis['quality_issues']
-                if issues:
-                    st.subheader("Data Quality Issues")
-                    for issue in issues:
+            # Data quality issues - SAFE CHECK
+            issues = sheet_analysis.get('quality_issues', [])
+            if issues:
+                st.subheader("Data Quality Issues")
+                for issue in issues:
+                    if issue:  # Only display non-empty issues
                         st.warning(f"⚠️ {issue}")
             
-            # Recommendations
-            if 'recommendations' in sheet_analysis:
-                recommendations = sheet_analysis['recommendations']
-                if recommendations:
-                    st.subheader("Recommendations")
-                    for rec in recommendations:
+            # Recommendations - SAFE CHECK
+            recommendations = sheet_analysis.get('recommendations', [])
+            if recommendations:
+                st.subheader("Recommendations")
+                for rec in recommendations:
+                    if rec:  # Only display non-empty recommendations
                         st.info(f"💡 {rec}")
 
 def validate_again(profile_code: str, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
