@@ -110,11 +110,15 @@ elif st.session_state.current_stage == "schema_detection":
     
     if 'schema_code' not in st.session_state:
         with st.spinner("🔍 Analyzing data structure..."):
-            schema_code = schema_detector.generate_schema_detection_code(
-                st.session_state.current_data,
-                st.session_state.current_model
-            )
-            st.session_state.schema_code = schema_code
+            try:
+                schema_code = schema_detector.generate_schema_detection_code(
+                    st.session_state.current_data,
+                    st.session_state.current_model
+                )
+                st.session_state.schema_code = schema_code
+            except Exception as e:
+                st.error(f"❌ Failed to generate schema code: {str(e)}")
+                st.stop()
     
     st.subheader("Generated Schema Detection Code")
     st.code(st.session_state.schema_code, language="python")
@@ -128,37 +132,63 @@ elif st.session_state.current_stage == "schema_detection":
                         st.session_state.schema_code,
                         st.session_state.current_data
                     )
-                    st.session_state.detected_schema = schema_info
-                    logger_service.log(st.session_state.session_id, "schema_detection", "Schema detected successfully")
+                    if schema_info is None or not schema_info:
+                        st.error("❌ Schema detection returned empty results")
+                        logger_service.log(st.session_state.session_id, "error", "Empty schema detection results")
+                    else:
+                        st.session_state.detected_schema = schema_info
+                        logger_service.log(st.session_state.session_id, "schema_detection", "Schema detected successfully")
+                        st.success("✅ Schema detection completed!")
             except Exception as e:
-                st.error(f"Execution failed: {str(e)}")
+                st.error(f"❌ Execution failed: {str(e)}")
                 logger_service.log(st.session_state.session_id, "error", f"Schema detection error: {str(e)}")
     
     with col2:
         if st.button("🔄 Regenerate Code"):
-            del st.session_state.schema_code
+            if 'schema_code' in st.session_state:
+                del st.session_state.schema_code
             st.rerun()
     
-    if 'detected_schema' in st.session_state:
+    if 'detected_schema' in st.session_state and st.session_state.detected_schema:
         st.subheader("Detected Schema")
         st.json(st.session_state.detected_schema)
         
         if st.button("➡️ Proceed to Schema Editing", type="primary"):
             st.session_state.current_stage = "schema_editing"
             st.rerun()
+    else:
+        st.info("ℹ️ Execute schema detection to proceed to the next stage.")
 
 elif st.session_state.current_stage == "schema_editing":
     st.header("3️⃣ Schema Editing & Refinement")
     
-    if 'edited_schema' not in st.session_state:
+    # Check if we have a detected schema first
+    if 'detected_schema' not in st.session_state or st.session_state.detected_schema is None:
+        st.error("❌ No schema detected. Please go back to Schema Detection stage.")
+        if st.button("🔙 Back to Schema Detection"):
+            st.session_state.current_stage = "schema_detection"
+            st.rerun()
+        st.stop()
+    
+    # Initialize edited_schema safely
+    if 'edited_schema' not in st.session_state or st.session_state.edited_schema is None:
         st.session_state.edited_schema = st.session_state.detected_schema.copy()
     
     # Interactive Schema Editor
-    edited_schema = schema_detector.create_schema_editor(
-        st.session_state.edited_schema,
-        st.session_state.current_data
-    )
-    st.session_state.edited_schema = edited_schema
+    try:
+        edited_schema = schema_detector.create_schema_editor(
+            st.session_state.edited_schema,
+            st.session_state.current_data
+        )
+        st.session_state.edited_schema = edited_schema
+    except Exception as e:
+        st.error(f"❌ Error in schema editor: {str(e)}")
+        st.write("**Debug Info:**")
+        st.write(f"- detected_schema exists: {'detected_schema' in st.session_state}")
+        st.write(f"- detected_schema value: {st.session_state.get('detected_schema', 'Not found')}")
+        st.write(f"- edited_schema exists: {'edited_schema' in st.session_state}")
+        st.write(f"- edited_schema value: {st.session_state.get('edited_schema', 'Not found')}")
+        st.stop()
     
     # Natural Language Instructions
     st.subheader("✍️ Natural Language Instructions")
@@ -170,13 +200,16 @@ elif st.session_state.current_stage == "schema_editing":
     
     if nl_instructions and st.button("🔄 Apply NL Changes"):
         with st.spinner("Processing natural language instructions..."):
-            updated_schema = schema_detector.apply_nl_instructions(
-                st.session_state.edited_schema,
-                nl_instructions,
-                st.session_state.current_model
-            )
-            st.session_state.edited_schema = updated_schema
-            st.rerun()
+            try:
+                updated_schema = schema_detector.apply_nl_instructions(
+                    st.session_state.edited_schema,
+                    nl_instructions,
+                    st.session_state.current_model
+                )
+                st.session_state.edited_schema = updated_schema
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error applying NL changes: {str(e)}")
     
     if st.button("✅ Confirm Schema", type="primary"):
         st.session_state.final_schema = st.session_state.edited_schema
