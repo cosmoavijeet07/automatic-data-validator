@@ -348,13 +348,16 @@ elif st.session_state.current_stage == "data_cleaning":
                 del st.session_state.cleaning_retries
             st.rerun()
     
-    if 'cleaned_data' in st.session_state:
+    if 'cleaned_data' in st.session_state and st.session_state.cleaned_data is not None:
         st.subheader("✨ Cleaned Data Preview")
         display_dataframe_info(st.session_state.cleaned_data, title="Cleaned Data")
         
         if st.button("🔍 Validate Cleaned Data", type="primary"):
             st.session_state.current_stage = "validation"
             st.rerun()
+    elif 'cleaned_data' in st.session_state:
+        st.warning("⚠️ Data cleaning completed but no cleaned data was produced.")
+        st.info("Please try regenerating the cleaning code or check the cleaning process.")
 
 elif st.session_state.current_stage == "validation":
     st.header("6️⃣ Validation & Quality Check")

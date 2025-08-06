@@ -41,9 +41,46 @@ def execute_analysis(code: str, dataframes: Dict[str, pd.DataFrame], user_instru
     
     return result['analysis_results']
 
+def validate_analysis_results(analysis_results: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and clean analysis results to ensure consistent format
+    """
+    if not isinstance(analysis_results, dict):
+        return {"error": "Analysis results must be a dictionary"}
+    
+    cleaned_results = {}
+    
+    for sheet_name, sheet_data in analysis_results.items():
+        if not isinstance(sheet_data, dict):
+            continue
+            
+        cleaned_sheet = {}
+        
+        # Ensure actionable_recommendations is always a list of strings
+        recommendations = sheet_data.get('actionable_recommendations', [])
+        if isinstance(recommendations, str):
+            cleaned_sheet['actionable_recommendations'] = [recommendations]
+        elif isinstance(recommendations, list):
+            # Filter out non-string items and empty strings
+            cleaned_sheet['actionable_recommendations'] = [
+                str(rec).strip() for rec in recommendations 
+                if rec and str(rec).strip()
+            ]
+        else:
+            cleaned_sheet['actionable_recommendations'] = []
+        
+        # Copy other valid fields safely
+        for key in ['missing_analysis', 'outliers', 'quality_issues']:
+            if key in sheet_data:
+                cleaned_sheet[key] = sheet_data[key]
+        
+        cleaned_results[sheet_name] = cleaned_sheet
+    
+    return cleaned_results
+
 def display_analysis_results(analysis_results: Dict[str, Any]):
     """
-    Display analysis results in a user-friendly format with safe None handling
+    Display analysis results with enhanced error handling
     """
     st.subheader("📊 Data Quality Analysis Results")
     
@@ -123,13 +160,28 @@ def display_analysis_results(analysis_results: Dict[str, Any]):
                     if issue:  # Only display non-empty issues
                         st.warning(f"⚠️ {issue}")
             
-            # Recommendations - SAFE CHECK
-            recommendations = sheet_analysis.get('recommendations', [])
+            # ✅ SAFE HANDLING: Actionable recommendations
+            recommendations = sheet_analysis.get('actionable_recommendations', [])
             if recommendations:
-                st.subheader("Recommendations")
-                for rec in recommendations:
-                    if rec:  # Only display non-empty recommendations
-                        st.info(f"💡 {rec}")
+                st.subheader("💡 Actionable Recommendations")
+                try:
+                    # Handle different recommendation formats
+                    if isinstance(recommendations, list):
+                        for i, rec in enumerate(recommendations, 1):
+                            if isinstance(rec, str) and rec.strip():
+                                st.info(f"{i}. {rec}")
+                            elif isinstance(rec, dict):
+                                # Handle dict format recommendations
+                                rec_text = rec.get('recommendation', rec.get('text', str(rec)))
+                                if rec_text:
+                                    st.info(f"{i}. {rec_text}")
+                    elif isinstance(recommendations, str):
+                        st.info(f"💡 {recommendations}")
+                    else:
+                        st.warning(f"⚠️ Skipping actionable_recommendations: Invalid format ({type(recommendations)})")
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ Could not display actionable recommendations: {str(e)}")
 
 def validate_again(profile_code: str, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
     """
