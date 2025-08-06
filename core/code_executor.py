@@ -9,9 +9,12 @@ def clean_code(code: str) -> str:
     """
     Clean code by removing markdown formatting and extracting pure Python
     """
-    # Remove markdown code block delimiters
+    # Remove markdown code block delimiters with language identifiers
+    code = re.sub(r'^```py\s*\n?', '', code, flags=re.MULTILINE | re.IGNORECASE)  
+
     code = re.sub(r'^```\s*$', '', code, flags=re.MULTILINE)
-    code = re.sub(r'```$', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^```python\s*\n?', '', code, flags=re.MULTILINE | re.IGNORECASE)
+    
     # Remove any remaining backticks at start/end
     code = code.strip('`')
     
@@ -19,13 +22,21 @@ def clean_code(code: str) -> str:
     code = re.sub(r'^#+.*\n', '', code, flags=re.MULTILINE)  # Remove headers
     code = re.sub(r'^\*\*.*\*\*\s*\n', '', code, flags=re.MULTILINE)  # Remove bold text lines
     
-    # Clean up extra whitespace and empty lines
+    # Remove standalone language identifiers that might be left over
     lines = code.split('\n')
     cleaned_lines = []
+    
     for line in lines:
-        # Skip empty lines at the beginning
-        if not cleaned_lines and not line.strip():
+        stripped = line.strip()
+        
+        # Skip lines that are just language identifiers
+        if stripped.lower() in ['python', 'py', 'javascript', 'js', 'sql', 'bash', 'sh', 'json', 'yaml']:
             continue
+        
+        # Skip empty lines at the beginning
+        if not cleaned_lines and not stripped:
+            continue
+            
         cleaned_lines.append(line)
     
     # Remove trailing empty lines
@@ -55,6 +66,11 @@ def safe_execute_code(code: str, namespace: Dict[str, Any]) -> Dict[str, Any]:
     # Clean the code first
     clean_python_code = clean_code(code)
     
+    # Additional safety check - ensure first line isn't a language identifier
+    lines = clean_python_code.split('\n')
+    if lines and lines.strip().lower() in ['python', 'py']:
+        clean_python_code = '\n'.join(lines[1:])
+    
     # Validate syntax before execution
     is_valid, syntax_error = validate_python_syntax(clean_python_code)
     if not is_valid:
@@ -75,7 +91,7 @@ def safe_execute_code(code: str, namespace: Dict[str, Any]) -> Dict[str, Any]:
         sys.stdout = stdout_capture
         sys.stderr = stderr_capture
         
-        # Execute cleaned code with timeout protection
+        # Execute cleaned code
         exec(clean_python_code, safe_namespace)
         
         # Capture any printed output
@@ -101,8 +117,8 @@ def safe_execute_code(code: str, namespace: Dict[str, Any]) -> Dict[str, Any]:
             'traceback': traceback.format_exc(),
             'stdout': stdout_capture.getvalue(),
             'stderr': stderr_capture.getvalue(),
-            'cleaned_code': clean_python_code,  # Include for debugging
-            'original_code': code[:500] + "..." if len(code) > 500 else code  # Truncated original
+            'cleaned_code': clean_python_code,
+            'original_code': code[:500] + "..." if len(code) > 500 else code
         }
         
         raise Exception(f"Code execution failed: {error_info}")
@@ -120,7 +136,6 @@ def execute_with_retry(code: str, namespace: Dict[str, Any], max_retries: int = 
     
     for attempt in range(max_retries):
         try:
-            # Try different cleaning strategies on each attempt
             if attempt == 0:
                 # First attempt: standard cleaning
                 result = safe_execute_code(code, namespace)
@@ -129,7 +144,7 @@ def execute_with_retry(code: str, namespace: Dict[str, Any], max_retries: int = 
                 # Second attempt: more aggressive cleaning
                 cleaned_code = clean_code(code)
                 # Remove any remaining markdown artifacts
-                cleaned_code = re.sub(r'```.*?```', '', cleaned_code, flags=re.DOTALL)
+                cleaned_code = re.sub(r'```.*?```
                 result = safe_execute_code(cleaned_code, namespace)
                 return result
             else:
@@ -137,12 +152,15 @@ def execute_with_retry(code: str, namespace: Dict[str, Any], max_retries: int = 
                 lines = code.split('\n')
                 python_lines = []
                 for line in lines:
-                    # Keep lines that look like Python code
-                    if (line.strip() and 
-                        not line.strip().startswith('#') and 
-                        not line.strip().startswith('```') and
+                    stripped = line.strip()
+                    # Skip language identifiers and markdown
+                    if (stripped and 
+                        not stripped.startswith('#') and 
+                        not stripped.startswith('```') and
+                        stripped.lower() not in ['python', 'py', 'javascript', 'js'] and
                         ('=' in line or 'import' in line or 'def ' in line or 'class ' in line or
-                         line.startswith(' ') or line.startswith('\t'))):
+                         line.startswith(' ') or line.startswith('\t') or 
+                         any(keyword in line for keyword in ['if', 'for', 'while', 'try', 'except', 'return']))):
                         python_lines.append(line)
                 
                 minimal_code = '\n'.join(python_lines)
@@ -164,7 +182,6 @@ def extract_variable(result: Dict[str, Any], variable_names: list) -> Any:
         if var_name in result:
             return result[var_name]
     
-    # If none of the expected variable names found, return None
     return None
 
 def log_execution_details(code: str, result: Dict[str, Any], session_id: str = None):
@@ -172,20 +189,23 @@ def log_execution_details(code: str, result: Dict[str, Any], session_id: str = N
     Log execution details for debugging purposes
     """
     if session_id:
-        from .logger_service import log
-        
-        log_data = {
-            'original_code_length': len(code),
-            'cleaned_code_length': len(result.get('_cleaned_code', '')),
-            'execution_success': result.get('_execution_success', False),
-            'stdout': result.get('_stdout', ''),
-            'stderr': result.get('_stderr', ''),
-            'variables_created': [k for k in result.keys() if not k.startswith('_')]
-        }
-        
-        log(session_id, "code_execution", str(log_data))
+        try:
+            from .logger_service import log
+            
+            log_data = {
+                'original_code_length': len(code),
+                'cleaned_code_length': len(result.get('_cleaned_code', '')),
+                'execution_success': result.get('_execution_success', False),
+                'stdout': result.get('_stdout', ''),
+                'stderr': result.get('_stderr', ''),
+                'variables_created': [k for k in result.keys() if not k.startswith('_')]
+            }
+            
+            log(session_id, "code_execution", str(log_data))
+        except ImportError:
+            pass
 
-# Convenience function for common execution patterns
+# Convenience functions for specific execution contexts
 def execute_schema_code(code: str, dataframes: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute schema detection code with predefined namespace
@@ -202,8 +222,6 @@ def execute_schema_code(code: str, dataframes: Dict[str, Any]) -> Dict[str, Any]
     }
     
     result = execute_with_retry(code, namespace)
-    
-    # Extract schema_info with fallback variable names
     schema_info = extract_variable(result, ['schema_info', 'schema', 'detected_schema'])
     
     if schema_info is None:
@@ -229,8 +247,6 @@ def execute_analysis_code(code: str, dataframes: Dict[str, Any]) -> Dict[str, An
     }
     
     result = execute_with_retry(code, namespace)
-    
-    # Extract analysis results with fallback variable names
     analysis_results = extract_variable(result, ['analysis_results', 'report', 'analysis_report'])
     
     if analysis_results is None:
@@ -252,8 +268,6 @@ def execute_cleaning_code(code: str, dataframes: Dict[str, Any]) -> Dict[str, An
     }
     
     result = execute_with_retry(code, namespace)
-    
-    # Extract cleaned data with fallback variable names
     cleaned_data = extract_variable(result, ['cleaned_dataframes', 'clean_df_dict', 'cleaned_data', 'df_dict'])
     
     if cleaned_data is None:
