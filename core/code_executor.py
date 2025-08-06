@@ -10,9 +10,9 @@ def clean_code(code: str) -> str:
     Clean code by removing markdown formatting and extracting pure Python
     """
     # Remove markdown code block delimiters
-    code = re.sub(r'^```
+    code = re.sub(r'^```')
     code = re.sub(r'^```\s*$', '', code, flags=re.MULTILINE)
-    code = re.sub(r'^```
+    code = re.sub(r'^```')
     
     # Remove any remaining backticks at start/end
     code = code.strip('`')
