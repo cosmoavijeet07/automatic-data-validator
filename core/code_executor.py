@@ -10,10 +10,8 @@ def clean_code(code: str) -> str:
     Clean code by removing markdown formatting and extracting pure Python
     """
     # Remove markdown code block delimiters
-    code = re.sub(r'^```')
     code = re.sub(r'^```\s*$', '', code, flags=re.MULTILINE)
-    code = re.sub(r'^```')
-    
+    code = re.sub(r'```$', '', code, flags=re.MULTILINE)
     # Remove any remaining backticks at start/end
     code = code.strip('`')
     
@@ -131,7 +129,7 @@ def execute_with_retry(code: str, namespace: Dict[str, Any], max_retries: int = 
                 # Second attempt: more aggressive cleaning
                 cleaned_code = clean_code(code)
                 # Remove any remaining markdown artifacts
-                cleaned_code = re.sub(r'```.*?```')
+                cleaned_code = re.sub(r'```.*?```', '', cleaned_code, flags=re.DOTALL)
                 result = safe_execute_code(cleaned_code, namespace)
                 return result
             else:
