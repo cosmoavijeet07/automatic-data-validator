@@ -5,8 +5,10 @@ openpyxl
 pyarrow
 dask[dataframe]
 duckdb
-ydata-profiling
-sweetviz
+pandas-profiling>=3.6.6
+dataprep>=0.4.5
+dtale>=3.0.0
+autoviz>=0.1.58
 python-dateutil
 pydantic
 tenacity
@@ -16,6 +18,5 @@ llama-index
 scikit-learn
 nltk
 tqdm
-
 openai>=1.0.0
 python-dotenv>=1.0.0
