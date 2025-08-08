@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
-from core.config import MODELS, DEFAULT_MODEL_KEY, MAX_RETRIES_PER_STEP, CLEANED_DIR, DATA_DIR
+from core.config import MODELS, MAX_RETRIES_PER_STEP, CLEANED_DIR, DATA_DIR
 from core.models import SessionState
 from core.session import save_session
 from core.logger import start_step, log_prompt, log_response, log_code, log_error, log_summary, flush_logs
