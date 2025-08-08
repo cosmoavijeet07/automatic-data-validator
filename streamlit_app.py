@@ -17,11 +17,13 @@ from llm.codegen import generate_code
 from llm.summarizer import summarize_strategy
 from exec.executor import exec_generated_code
 from exec.pipeline_builder import build_pipeline
+from dotenv import load_dotenv
+load_dotenv()
 
 st.set_page_config(page_title="LLM Data Cleaner", layout="wide")
 
 if "state" not in st.session_state:
-    st.session_state["state"] = SessionState(model_key=DEFAULT_MODEL_KEY)
+    st.session_state["state"] = SessionState(model_key=os.getenv("OPENAI_API_KEY"))
 
 state: SessionState = st.session_state["state"]
 
@@ -30,7 +32,7 @@ st.title("LLM-augmented Data Cleaning Pipeline")
 with st.sidebar:
     st.header("Session")
     st.write(f"Session ID: {state.session_id}")
-    model_key = st.selectbox("Model", options=list(MODELS.keys()), index=list(MODELS.keys()).index(state.model_key or DEFAULT_MODEL_KEY))
+    model_key = st.selectbox("Model", options=list(MODELS.keys()), index=list(MODELS.keys()).index(state.model_key or os.getenv("OPENAI_API_KEY")))
     state.model_key = model_key
     mode = st.radio("Mode", ["Human Reviewed", "Automatic"], index=0 if state.mode=="Human Reviewed" else 1)
     state.mode = mode
