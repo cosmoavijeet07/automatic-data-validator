@@ -1,15 +1,14 @@
 import os
 from typing import Dict, Any, List
 from dotenv import load_dotenv
-from core.config import MODELS
+from core.config import MODELS, DEFAULT_MODEL_KEY
 from core.errors import LLMError
 
 # Load environment variables from .env file
-
 load_dotenv()
 
 class LLMClient:
-    def __init__(self, model_key: str):
+    def __init__(self, model_key: str = DEFAULT_MODEL_KEY):
         self.model = MODELS[model_key]
         self.api_key = self._get_api_key()
         self.temperature = self._get_temperature()

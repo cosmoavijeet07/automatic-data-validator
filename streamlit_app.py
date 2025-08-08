@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
-from core.config import MODELS, MAX_RETRIES_PER_STEP, CLEANED_DIR, DATA_DIR
+from core.config import MODELS, MAX_RETRIES_PER_STEP, CLEANED_DIR, DATA_DIR, DEFAULT_MODEL_KEY
 from core.models import SessionState
 from core.session import save_session
 from core.logger import start_step, log_prompt, log_response, log_code, log_error, log_summary, flush_logs
@@ -17,13 +17,12 @@ from llm.codegen import generate_code
 from llm.summarizer import summarize_strategy
 from exec.executor import exec_generated_code
 from exec.pipeline_builder import build_pipeline
-from dotenv import load_dotenv
-load_dotenv()
+
 
 st.set_page_config(page_title="LLM Data Cleaner", layout="wide")
 
 if "state" not in st.session_state:
-    st.session_state["state"] = SessionState(model_key=os.getenv("OPENAI_API_KEY"))
+    st.session_state["state"] = SessionState(model_key=DEFAULT_MODEL_KEY)
 
 state: SessionState = st.session_state["state"]
 
@@ -32,7 +31,7 @@ st.title("LLM-augmented Data Cleaning Pipeline")
 with st.sidebar:
     st.header("Session")
     st.write(f"Session ID: {state.session_id}")
-    model_key = st.selectbox("Model", options=list(MODELS.keys()), index=list(MODELS.keys()).index(state.model_key or os.getenv("OPENAI_API_KEY")))
+    model_key = st.selectbox("Model", options=list(MODELS.keys()), index=list(MODELS.keys()).index(state.model_key or DEFAULT_MODEL_KEY))
     state.model_key = model_key
     mode = st.radio("Mode", ["Human Reviewed", "Automatic"], index=0 if state.mode=="Human Reviewed" else 1)
     state.mode = mode

@@ -13,7 +13,7 @@ MODELS = {
     "GPT O4 Mini": ModelConfig(name="GPT O4 Mini", provider="openai", id="o4-mini-2025-04-16", default=False),
 }
 
-
+DEFAULT_MODEL_KEY = next(k for k, v in MODELS.items() if v.default)
 
 DATA_DIR = os.environ.get("APP_DATA_DIR", "outputs")
 LOG_DIR = os.path.join(DATA_DIR, "logs")
