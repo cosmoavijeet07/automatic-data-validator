@@ -7,10 +7,10 @@ from core.session import save_session
 from core.logger import start_step, log_prompt, log_response, log_code, log_error, log_summary, flush_logs
 from core.storage import save_df, load_df
 from core.errors import *
-from io.ingest import ingest_file
+from in_out.ingest import ingest_file
 from utils.df_utils import detect_schema
-from io.schema import apply_schema_edits
-from io.convert import to_preview
+from in_out.schema import apply_schema_edits
+from in_out.convert import to_preview
 from quality.profile import basic_quality_report, export_ydata_profile, export_sweetviz
 from quality.correction import apply_corrections
 from llm.codegen import generate_code
