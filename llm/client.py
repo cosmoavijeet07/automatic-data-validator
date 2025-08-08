@@ -1,7 +1,7 @@
 import os
 from typing import Dict, Any, List
 from dotenv import load_dotenv
-from core.config import MODELS, DEFAULT_MODEL_KEY
+from core.config import MODELS
 from core.errors import LLMError
 
 # Load environment variables from .env file
