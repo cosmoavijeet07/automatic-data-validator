@@ -8,7 +8,7 @@ from core.errors import LLMError
 load_dotenv()
 
 class LLMClient:
-    def __init__(self, model_key: str = DEFAULT_MODEL_KEY):
+    def __init__(self, model_key: str):
         self.model = MODELS[model_key]
         self.api_key = self._get_api_key()
         self.temperature = self._get_temperature()
