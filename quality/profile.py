@@ -44,7 +44,7 @@ def basic_quality_report(df: pd.DataFrame) -> Dict[str, Any]:
     return report
 
 def export_pandas_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Use pandas-profiling as replacement for ydata-profiling."""
+    """Use pandas-profiling 3.2.0 (Python 3.13 compatible)."""
     try:
         from pandas_profiling import ProfileReport
         profile = ProfileReport(df, title=f"Profile {session_id}", explorative=True, minimal=True)
@@ -52,28 +52,63 @@ def export_pandas_profile(df: pd.DataFrame, session_id: str) -> str:
         profile.to_file(path)
         return path
     except ImportError:
-        # Fallback to dataprep if pandas_profiling is not available
-        return export_dataprep_profile(df, session_id)
-    except Exception as e:
-        raise ProfilingError(str(e))
-
-def export_dataprep_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Use dataprep as alternative profiling library."""
-    try:
-        from dataprep.eda import create_report
-        report = create_report(df, title=f"DataPrep Profile {session_id}")
-        path = os.path.join(DATA_DIR, f"dataprep_profile_{session_id}.html")
-        report.save(path)
-        return path
-    except ImportError:
-        # Final fallback to custom HTML report
         return export_custom_profile(df, session_id)
     except Exception as e:
         raise ProfilingError(str(e))
 
-def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Custom HTML profiling report as final fallback."""
+def export_sweetviz(df: pd.DataFrame, session_id: str) -> str:
+    """Use sweetviz for comparison reports."""
     try:
+        import sweetviz as sv
+        report = sv.analyze(df)
+        path = os.path.join(DATA_DIR, f"sweetviz_{session_id}.html")
+        report.show_html(filepath=path, open_browser=False)
+        return path
+    except ImportError:
+        return export_custom_profile(df, session_id)
+    except Exception as e:
+        return export_custom_profile(df, session_id)
+
+def export_dtale_profile(df: pd.DataFrame, session_id: str) -> str:
+    """Use dtale for interactive profiling."""
+    try:
+        import dtale
+        # Create a static HTML report
+        d = dtale.show(df, ignore_duplicate=True, open_browser=False)
+        path = os.path.join(DATA_DIR, f"dtale_profile_{session_id}.html")
+        
+        # Generate basic dtale export
+        html_content = f"""
+        <html>
+        <head><title>D-Tale Profile - {session_id}</title></head>
+        <body>
+        <h1>D-Tale Interactive Profile</h1>
+        <p>Dataset loaded with {df.shape[0]} rows and {df.shape[1]} columns</p>
+        <p>For full interactive experience, run: <code>dtale.show(df)</code></p>
+        {df.describe().to_html()}
+        </body>
+        </html>
+        """
+        
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        d.kill()  # Clean up dtale instance
+        return path
+    except ImportError:
+        return export_custom_profile(df, session_id)
+    except Exception as e:
+        return export_custom_profile(df, session_id)
+
+def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
+    """Enhanced custom HTML profiling report."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        import base64
+        from io import BytesIO
+        
         # Generate comprehensive statistics
         numeric_summary = df.describe()
         object_summary = df.describe(include=['object'])
@@ -84,19 +119,43 @@ def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
         duplicates = df.duplicated().sum()
         memory_usage = df.memory_usage(deep=True).sum() / 1024**2  # MB
         
-        # Correlation matrix for numeric columns
-        numeric_df = df.select_dtypes(include=['number'])
-        correlation_html = ""
-        if not numeric_df.empty and len(numeric_df.columns) > 1:
-            corr_matrix = numeric_df.corr()
-            correlation_html = f"""
-            <h2>Correlation Matrix</h2>
-            {corr_matrix.to_html()}
-            """
+        # Generate visualizations
+        plots_html = ""
         
-        # Value counts for categorical columns (top 10)
+        # Missing values plot
+        if missing_data.sum() > 0:
+            plt.figure(figsize=(10, 6))
+            missing_data[missing_data > 0].plot(kind='bar')
+            plt.title('Missing Values by Column')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png')
+            buffer.seek(0)
+            plot_data = base64.b64encode(buffer.getvalue()).decode()
+            plots_html += f'<img src="data:image/png;base64,{plot_data}" style="max-width:100%;"><br><br>'
+            plt.close()
+        
+        # Correlation heatmap for numeric columns
+        numeric_df = df.select_dtypes(include=['number'])
+        if not numeric_df.empty and len(numeric_df.columns) > 1:
+            plt.figure(figsize=(10, 8))
+            corr_matrix = numeric_df.corr()
+            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0)
+            plt.title('Correlation Matrix')
+            plt.tight_layout()
+            
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png')
+            buffer.seek(0)
+            plot_data = base64.b64encode(buffer.getvalue()).decode()
+            plots_html += f'<img src="data:image/png;base64,{plot_data}" style="max-width:100%;"><br><br>'
+            plt.close()
+        
+        # Value counts for categorical columns
         categorical_html = ""
-        for col in df.select_dtypes(include=['object']).columns[:5]:  # Limit to first 5 columns
+        for col in df.select_dtypes(include=['object']).columns[:5]:
             top_values = df[col].value_counts().head(10)
             categorical_html += f"""
             <h3>Top Values in '{col}'</h3>
@@ -115,6 +174,7 @@ def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
                 th {{ background-color: #f2f2f2; }}
                 h1, h2, h3 {{ color: #333; }}
                 .overview {{ background-color: #f9f9f9; padding: 15px; border-radius: 5px; }}
+                img {{ margin: 10px 0; }}
             </style>
         </head>
         <body>
@@ -128,6 +188,9 @@ def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
                 <p><strong>Missing Values:</strong> {missing_data.sum():,} total</p>
             </div>
             
+            <h2>Visualizations</h2>
+            {plots_html}
+            
             <h2>Data Types</h2>
             {data_types.to_frame('Data Type').to_html()}
             
@@ -139,8 +202,6 @@ def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
             
             <h2>Text Columns Summary</h2>
             {object_summary.to_html() if not object_summary.empty else '<p>No text columns found.</p>'}
-            
-            {correlation_html}
             
             <h2>Categorical Columns - Top Values</h2>
             {categorical_html if categorical_html else '<p>No categorical columns to display.</p>'}
@@ -158,84 +219,30 @@ def export_custom_profile(df: pd.DataFrame, session_id: str) -> str:
         return path
         
     except Exception as e:
-        raise ProfilingError(f"Custom profile report generation failed: {str(e)}")
-
-def export_dtale_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Use dtale as another alternative for interactive profiling."""
-    try:
-        import dtale
-        d = dtale.show(df, ignore_duplicate=True)
-        # Generate static HTML export
-        path = os.path.join(DATA_DIR, f"dtale_profile_{session_id}.html")
-        # Note: dtale typically runs as a server, this is a placeholder for static export
-        # You might need to customize this based on dtale's current API
+        # Minimal fallback without visualizations
+        html_content = f"""
+        <html><body>
+        <h1>Basic Profile - {session_id}</h1>
+        <p>Shape: {df.shape[0]} rows × {df.shape[1]} columns</p>
+        {df.describe().to_html()}
+        {df.dtypes.to_frame('Data Type').to_html()}
+        </body></html>
+        """
+        path = os.path.join(DATA_DIR, f"profile_{session_id}.html")
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
         return path
-    except ImportError:
-        # Fallback to custom profile
-        return export_custom_profile(df, session_id)
-    except Exception as e:
-        raise ProfilingError(str(e))
 
-def export_autoviz_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Use AutoViz as visualization alternative."""
+# Main profiling function
+def export_ydata_profile(df: pd.DataFrame, session_id: str) -> str:
+    """Try multiple profiling approaches in order."""
     try:
-        from autoviz.AutoViz_Class import AutoViz_Class
-        av = AutoViz_Class()
-        path_dir = os.path.join(DATA_DIR, f"autoviz_{session_id}")
-        os.makedirs(path_dir, exist_ok=True)
-        
-        # AutoViz generates multiple files, return directory path
-        av.AutoViz(
-            filename="",
-            dfte=df,
-            depVar="",
-            verbose=0,
-            chart_format="html",
-            max_rows_analyzed=10000,
-            max_cols_analyzed=30,
-            save_plot_dir=path_dir
-        )
-        return path_dir
-    except ImportError:
-        # Fallback to custom profile
-        return export_custom_profile(df, session_id)
-    except Exception as e:
-        raise ProfilingError(str(e))
-
-# Main function that tries libraries in order of preference
-def export_comprehensive_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Try multiple profiling libraries in order of preference."""
-    try:
-        # First try pandas_profiling (most similar to ydata-profiling)
         return export_pandas_profile(df, session_id)
     except:
         try:
-            # Then try dataprep
-            return export_dataprep_profile(df, session_id)
+            return export_sweetviz(df, session_id)
         except:
             try:
-                # Then try dtale
                 return export_dtale_profile(df, session_id)
             except:
-                # Final fallback to custom HTML
                 return export_custom_profile(df, session_id)
-
-# Legacy function names for backward compatibility
-def export_ydata_profile(df: pd.DataFrame, session_id: str) -> str:
-    """Replacement for ydata-profiling using compatible alternatives."""
-    return export_comprehensive_profile(df, session_id)
-
-def export_sweetviz(df: pd.DataFrame, session_id: str) -> str:
-    """Replacement for sweetviz using compatible alternatives."""
-    try:
-        import sweetviz as sv
-        report = sv.analyze(df)
-        path = os.path.join(DATA_DIR, f"sweetviz_{session_id}.html")
-        report.show_html(filepath=path, open_browser=False)
-        return path
-    except ImportError:
-        # Fallback if sweetviz is not compatible
-        return export_comprehensive_profile(df, session_id)
-    except Exception as e:
-        # Fallback on any error
-        return export_comprehensive_profile(df, session_id)

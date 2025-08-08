@@ -3,20 +3,24 @@ pandas
 numpy
 openpyxl
 pyarrow
-dask[dataframe]
 duckdb
-pandas-profiling>=3.6.6
-dataprep>=0.4.5
+# Removed conflicting libraries and replaced with Python 3.13 compatible alternatives
+pandas-profiling==3.2.0
+# dataprep>=0.4.5  # Conflicts with tiktoken - removed
+# tiktoken  # Conflicts with dataprep - removed for now
 dtale>=3.0.0
-autoviz>=0.1.58
+sweetviz>=2.1.4
 python-dateutil
 pydantic
 tenacity
-tiktoken
-langchain
-llama-index
+# tiktoken - removed due to regex conflict
+langchain-core>=0.1.0  # Use core instead of full langchain
+# llama-index - removed due to tiktoken dependency
 scikit-learn
 nltk
 tqdm
 openai>=1.0.0
 python-dotenv>=1.0.0
+seaborn>=0.12.0  # Added for visualization
+matplotlib>=3.6.0  # Added for visualization
+plotly>=5.0.0  # Added for interactive plots
