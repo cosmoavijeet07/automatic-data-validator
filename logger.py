@@ -14,6 +14,10 @@ import pandas as pd
 class NumpyJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle NumPy, Pandas, and other special types"""
     def default(self, obj):
+        # Handle basic Python types first
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            return obj
+        
         # Handle NumPy data types
         if isinstance(obj, np.integer):
             return int(obj)
@@ -27,33 +31,36 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return str(obj)
         
         # Handle Pandas data types
-        elif isinstance(obj, pd.DataFrame):
-            return obj.to_dict('records')
-        elif isinstance(obj, pd.Series):
-            return obj.to_dict()
-        elif isinstance(obj, pd.Timestamp):
-            return obj.isoformat()
-        elif isinstance(obj, pd.Categorical):
-            return obj.tolist()
-        elif str(type(obj)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
-            return str(obj)
-        elif hasattr(obj, 'dtype') and str(type(obj.dtype)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
-            return str(obj.dtype)
+        try:
+            if isinstance(obj, pd.DataFrame):
+                return obj.to_dict('records')
+            elif isinstance(obj, pd.Series):
+                return obj.to_dict()
+            elif isinstance(obj, pd.Timestamp):
+                return obj.isoformat()
+            elif isinstance(obj, pd.Categorical):
+                return obj.tolist()
+            elif 'pandas.core.dtypes.dtypes.CategoricalDtype' in str(type(obj)):
+                return str(obj)
+            elif hasattr(obj, 'dtype') and 'CategoricalDtype' in str(type(obj.dtype)):
+                return str(obj.dtype)
+        except NameError:
+            pass  # Pandas not available
         
         # Handle datetime objects
-        elif isinstance(obj, (datetime.datetime, datetime.date)):
+        if isinstance(obj, (datetime.datetime, datetime.date)):
             return obj.isoformat()
         
         # Handle Path objects
-        elif isinstance(obj, Path):
+        if isinstance(obj, Path):
             return str(obj)
         
         # Handle any object with a name attribute
-        elif hasattr(obj, '__name__'):
+        if hasattr(obj, '__name__'):
             return obj.__name__
         
         # Convert sets to lists
-        elif isinstance(obj, set):
+        if isinstance(obj, set):
             return list(obj)
         
         # For any other type, try to convert to string
@@ -63,20 +70,25 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return super().default(obj)
 
 
-
 def safe_json_dumps(data: Any, **kwargs) -> str:
     """Safely dump data to JSON string handling various data types"""
     return json.dumps(data, cls=NumpyJSONEncoder, **kwargs)
 
 def safe_dict_convert(data: Any) -> Any:
     """Recursively convert a dictionary to ensure all values are JSON serializable"""
+    # Handle basic types first
+    if data is None or isinstance(data, (str, int, float, bool)):
+        return data
+    
+    # Handle containers
     if isinstance(data, dict):
-        return {k: safe_dict_convert(v) for k, v in data.items()}
-    elif isinstance(data, list):
+        return {str(k) if not isinstance(k, (str, int, float, bool)) else k: 
+                safe_dict_convert(v) for k, v in data.items()}
+    elif isinstance(data, (list, tuple)):
         return [safe_dict_convert(item) for item in data]
-    elif isinstance(data, tuple):
-        return [safe_dict_convert(item) for item in data]
-    elif isinstance(data, np.integer):
+    
+    # Handle NumPy types
+    if isinstance(data, np.integer):
         return int(data)
     elif isinstance(data, np.floating):
         return float(data)
@@ -84,33 +96,41 @@ def safe_dict_convert(data: Any) -> Any:
         return data.tolist()
     elif isinstance(data, np.bool_):
         return bool(data)
-    elif isinstance(data, pd.DataFrame):
-        return data.to_dict('records')
-    elif isinstance(data, pd.Series):
-        return data.to_dict()
-    elif isinstance(data, pd.Timestamp):
-        return data.isoformat()
-    elif isinstance(data, pd.Categorical):
-        return data.tolist()
-    elif str(type(data)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
+    elif isinstance(data, np.dtype):
         return str(data)
-    elif hasattr(data, 'dtype') and str(type(data.dtype)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
-        return str(data.dtype)
-    elif isinstance(data, (datetime.datetime, datetime.date)):
+    
+    # Handle Pandas types
+    try:
+        if isinstance(data, pd.DataFrame):
+            return data.to_dict('records')
+        elif isinstance(data, pd.Series):
+            return data.to_dict()
+        elif isinstance(data, pd.Timestamp):
+            return data.isoformat()
+        elif isinstance(data, pd.Categorical):
+            return data.tolist()
+        elif 'pandas.core.dtypes.dtypes.CategoricalDtype' in str(type(data)):
+            return str(data)
+        elif hasattr(data, 'dtype') and 'CategoricalDtype' in str(type(data.dtype)):
+            return str(data.dtype)
+    except NameError:
+        pass  # Pandas not available
+    
+    # Handle other special types
+    if isinstance(data, (datetime.datetime, datetime.date)):
         return data.isoformat()
     elif isinstance(data, Path):
-        return str(data)
-    elif isinstance(data, np.dtype):
         return str(data)
     elif hasattr(data, '__name__'):
         return data.__name__
     elif isinstance(data, set):
         return list(data)
-    else:
-        try:
-            return str(data)
-        except:
-            return None
+    
+    # Final fallback
+    try:
+        return str(data)
+    except:
+        return None
 
 class Logger:
     """Session logger for tracking data cleaning activities"""
