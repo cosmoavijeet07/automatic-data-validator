@@ -707,9 +707,8 @@ def handle_downloads(logger):
             mime="text/csv"
         )
         
-        # Log file
-        logs = logger.get_logs()
-        log_json = json.dumps(logs, indent=2, default=str)
+        # Log file - Use the logger's export function which handles serialization
+        log_json = logger.export_logs(format="json")
         st.download_button(
             label="Download Log File (JSON)",
             data=log_json,

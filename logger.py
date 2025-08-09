@@ -8,6 +8,98 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from config import LOGS_DIR, LOG_LEVEL, LOG_FORMAT
 import logging
+import numpy as np
+import pandas as pd
+
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle NumPy and Pandas types"""
+    def default(self, obj):
+        # Handle NumPy data types
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        
+        # Handle Pandas data types
+        elif isinstance(obj, pd.DataFrame):
+            return obj.to_dict('records')
+        elif isinstance(obj, pd.Series):
+            return obj.to_dict()
+        elif isinstance(obj, pd.Timestamp):
+            return obj.isoformat()
+        
+        # Handle datetime objects
+        elif isinstance(obj, (datetime.datetime, datetime.date)):
+            return obj.isoformat()
+        
+        # Handle Path objects
+        elif isinstance(obj, Path):
+            return str(obj)
+        
+        # Handle dtype objects
+        elif hasattr(obj, 'dtype'):
+            return str(obj)
+        
+        # Handle any object with a name attribute (like dtype)
+        elif hasattr(obj, '__name__'):
+            return obj.__name__
+        
+        # Convert sets to lists
+        elif isinstance(obj, set):
+            return list(obj)
+        
+        # For any other type, try to convert to string
+        try:
+            return str(obj)
+        except:
+            return super().default(obj)
+
+def safe_json_dumps(data: Any, **kwargs) -> str:
+    """Safely dump data to JSON string handling various data types"""
+    return json.dumps(data, cls=NumpyJSONEncoder, **kwargs)
+
+def safe_dict_convert(data: Any) -> Any:
+    """Recursively convert a dictionary to ensure all values are JSON serializable"""
+    if isinstance(data, dict):
+        return {k: safe_dict_convert(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [safe_dict_convert(item) for item in data]
+    elif isinstance(data, tuple):
+        return [safe_dict_convert(item) for item in data]
+    elif isinstance(data, np.integer):
+        return int(data)
+    elif isinstance(data, np.floating):
+        return float(data)
+    elif isinstance(data, np.ndarray):
+        return data.tolist()
+    elif isinstance(data, np.bool_):
+        return bool(data)
+    elif isinstance(data, pd.DataFrame):
+        return data.to_dict('records')
+    elif isinstance(data, pd.Series):
+        return data.to_dict()
+    elif isinstance(data, pd.Timestamp):
+        return data.isoformat()
+    elif isinstance(data, (datetime.datetime, datetime.date)):
+        return data.isoformat()
+    elif isinstance(data, Path):
+        return str(data)
+    elif hasattr(data, 'dtype'):
+        return str(data)
+    elif hasattr(data, '__name__'):
+        return data.__name__
+    elif isinstance(data, set):
+        return list(data)
+    else:
+        try:
+            # Try to convert to string as last resort
+            return str(data)
+        except:
+            return None
 
 class Logger:
     """Session logger for tracking data cleaning activities"""
@@ -43,19 +135,22 @@ class Logger:
         """
         timestamp = datetime.datetime.now().isoformat()
         
+        # Convert details to ensure JSON serialization
+        safe_details = safe_dict_convert(details) if details else {}
+        
         log_entry = {
             "timestamp": timestamp,
             "session_id": self.session_id,
             "action": action,
             "level": level,
-            "details": details or {}
+            "details": safe_details
         }
         
         # Add to memory logs
         self.logs.append(log_entry)
         
         # Log to Python logger
-        log_message = f"{action} - {json.dumps(details, default=str) if details else ''}"
+        log_message = f"{action} - {safe_json_dumps(safe_details) if safe_details else ''}"
         getattr(self.python_logger, level.lower())(log_message)
         
         # Save to file
@@ -66,14 +161,15 @@ class Logger:
         """Log a data operation with before/after shapes"""
         operation_details = {
             "operation": operation,
-            "before_shape": before_shape,
-            "after_shape": after_shape,
-            "rows_changed": after_shape[0] - before_shape[0],
-            "columns_changed": after_shape[1] - before_shape[1]
+            "before_shape": list(before_shape) if before_shape else None,
+            "after_shape": list(after_shape) if after_shape else None,
+            "rows_changed": after_shape[0] - before_shape[0] if before_shape and after_shape else 0,
+            "columns_changed": after_shape[1] - before_shape[1] if before_shape and after_shape else 0
         }
         
         if details:
-            operation_details.update(details)
+            safe_details = safe_dict_convert(details)
+            operation_details.update(safe_details)
         
         self.log(f"Data operation: {operation}", operation_details)
     
@@ -127,7 +223,7 @@ class Logger:
         error_details = {
             "error_type": error_type,
             "error_message": error_message,
-            "context": context or {},
+            "context": safe_dict_convert(context) if context else {},
             "traceback": traceback
         }
         
@@ -137,7 +233,7 @@ class Logger:
                            analysis_time: float = None):
         """Log data quality analysis results"""
         quality_details = {
-            "quality_score": quality_score,
+            "quality_score": float(quality_score) if quality_score else 0,
             "issues_count": len(issues_found),
             "issues_found": issues_found,
             "analysis_time": analysis_time
@@ -150,8 +246,8 @@ class Logger:
         """Log schema changes"""
         schema_details = {
             "column": column,
-            "old_type": old_type,
-            "new_type": new_type,
+            "old_type": str(old_type),
+            "new_type": str(new_type),
             "change_reason": change_reason
         }
         
@@ -242,7 +338,7 @@ class Logger:
             Exported data as string
         """
         if format == "json":
-            return json.dumps(self.logs, indent=2, default=str)
+            return safe_json_dumps(self.logs, indent=2)
         
         elif format == "csv":
             import csv
@@ -297,7 +393,8 @@ class Logger:
         """Save logs to file"""
         try:
             with open(self.log_file_path, 'w') as f:
-                json.dump(self.logs, f, indent=2, default=str)
+                safe_json_dumps(self.logs, indent=2)
+                f.write(safe_json_dumps(self.logs, indent=2))
         except Exception as e:
             self.python_logger.error(f"Failed to save logs to file: {str(e)}")
     
@@ -342,8 +439,8 @@ class Logger:
                 metrics["total_operations"] += 1
                 execution_time = details['execution_time']
                 if execution_time is not None:
-                    execution_times.append(execution_time)
-                    metrics["total_execution_time"] += execution_time
+                    execution_times.append(float(execution_time))
+                    metrics["total_execution_time"] += float(execution_time)
             
             # Count success/failure
             if 'success' in details:
