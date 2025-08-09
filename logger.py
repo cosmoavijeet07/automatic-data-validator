@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 class NumpyJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle NumPy, Pandas, and other special types"""
+    """Custom JSON encoder to handle NumPy and Pandas types"""
     def default(self, obj):
         # Handle NumPy data types
         if isinstance(obj, np.integer):
@@ -24,6 +24,14 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, np.bool_):
             return bool(obj)
         
+        # Handle NumPy dtype objects
+        elif isinstance(obj, np.dtype):
+            return str(obj)
+        
+        # Handle Pandas dtypes (including CategoricalDtype)
+        elif hasattr(obj, '__module__') and obj.__module__ and 'pandas' in obj.__module__:
+            return str(obj)
+        
         # Handle Pandas data types
         elif isinstance(obj, pd.DataFrame):
             return obj.to_dict('records')
@@ -31,8 +39,6 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return obj.to_dict()
         elif isinstance(obj, pd.Timestamp):
             return obj.isoformat()
-        elif isinstance(obj, pd.CategoricalDtype):  # Handle CategoricalDtype
-            return str(obj)
         
         # Handle datetime objects
         elif isinstance(obj, (datetime.datetime, datetime.date)):
@@ -42,8 +48,8 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, Path):
             return str(obj)
         
-        # Handle dtype objects
-        elif isinstance(obj, np.dtype):
+        # Handle dtype objects (fallback)
+        elif hasattr(obj, 'dtype'):
             return str(obj)
         
         # Handle any object with a name attribute (like dtype)
@@ -59,6 +65,8 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return str(obj)
         except:
             return super().default(obj)
+
+
 
 def safe_json_dumps(data: Any, **kwargs) -> str:
     """Safely dump data to JSON string handling various data types"""
