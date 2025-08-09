@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 class NumpyJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle NumPy and Pandas types"""
+    """Custom JSON encoder to handle NumPy, Pandas, and other special types"""
     def default(self, obj):
         # Handle NumPy data types
         if isinstance(obj, np.integer):
@@ -23,13 +23,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return obj.tolist()
         elif isinstance(obj, np.bool_):
             return bool(obj)
-        
-        # Handle NumPy dtype objects
         elif isinstance(obj, np.dtype):
-            return str(obj)
-        
-        # Handle Pandas dtypes (including CategoricalDtype)
-        elif hasattr(obj, '__module__') and obj.__module__ and 'pandas' in obj.__module__:
             return str(obj)
         
         # Handle Pandas data types
@@ -39,6 +33,12 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return obj.to_dict()
         elif isinstance(obj, pd.Timestamp):
             return obj.isoformat()
+        elif isinstance(obj, pd.Categorical):
+            return obj.tolist()
+        elif str(type(obj)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
+            return str(obj)
+        elif hasattr(obj, 'dtype') and str(type(obj.dtype)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
+            return str(obj.dtype)
         
         # Handle datetime objects
         elif isinstance(obj, (datetime.datetime, datetime.date)):
@@ -48,11 +48,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, Path):
             return str(obj)
         
-        # Handle dtype objects (fallback)
-        elif hasattr(obj, 'dtype'):
-            return str(obj)
-        
-        # Handle any object with a name attribute (like dtype)
+        # Handle any object with a name attribute
         elif hasattr(obj, '__name__'):
             return obj.__name__
         
@@ -65,7 +61,6 @@ class NumpyJSONEncoder(json.JSONEncoder):
             return str(obj)
         except:
             return super().default(obj)
-
 
 
 
@@ -95,15 +90,17 @@ def safe_dict_convert(data: Any) -> Any:
         return data.to_dict()
     elif isinstance(data, pd.Timestamp):
         return data.isoformat()
-    elif isinstance(data, pd.CategoricalDtype):  # Handle CategoricalDtype
+    elif isinstance(data, pd.Categorical):
+        return data.tolist()
+    elif str(type(data)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
         return str(data)
+    elif hasattr(data, 'dtype') and str(type(data.dtype)) == "<class 'pandas.core.dtypes.dtypes.CategoricalDtype'>":
+        return str(data.dtype)
     elif isinstance(data, (datetime.datetime, datetime.date)):
         return data.isoformat()
     elif isinstance(data, Path):
         return str(data)
     elif isinstance(data, np.dtype):
-        return str(data)
-    elif hasattr(data, 'dtype'):
         return str(data)
     elif hasattr(data, '__name__'):
         return data.__name__
