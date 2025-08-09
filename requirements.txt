@@ -9,6 +9,12 @@ python-dotenv
 plotly
 scikit-learn
 nltk
+langchain
+chromadb
+tiktoken
+dask
 pyarrow
 jsonschema
 matplotlib
+seaborn
+
