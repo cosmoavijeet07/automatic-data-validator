@@ -68,6 +68,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
 
 
 
+
 def safe_json_dumps(data: Any, **kwargs) -> str:
     """Safely dump data to JSON string handling various data types"""
     return json.dumps(data, cls=NumpyJSONEncoder, **kwargs)
