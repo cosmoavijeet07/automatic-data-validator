@@ -219,34 +219,98 @@ def handle_schema_management(logger, llm_client):
         
         nl_instruction = st.text_area(
             "Describe schema changes in natural language",
-            placeholder="e.g., 'Convert date column to datetime, make age column integer, treat category as categorical'"
+            placeholder="e.g., 'Convert date column to datetime, make age column integer, treat category as categorical'",
+            key="nl_schema_input"
         )
         
-        if st.button("Apply NL Changes") and nl_instruction:
-            with st.spinner("Processing natural language instruction..."):
-                try:
-                    updated_schema = schema_manager.process_nl_schema_change(
-                        st.session_state.schema, 
-                        nl_instruction
-                    )
-                    st.session_state.schema = updated_schema
-                    st.success("Schema updated successfully!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error processing NL instruction: {str(e)}")
+        if st.button("Process NL Changes", key="nl_schema_button"):
+            if nl_instruction:
+                with st.spinner("Processing natural language instruction..."):
+                    try:
+                        updated_schema = schema_manager.process_nl_schema_change(
+                            st.session_state.schema, 
+                            nl_instruction
+                        )
+                        
+                        # Show the proposed changes for user review
+                        st.subheader("⚡ Proposed Schema Changes")
+                        
+                        # Display changes
+                        changes_found = False
+                        for col_name in st.session_state.schema.keys():
+                            if col_name in updated_schema:
+                                old_type = st.session_state.schema[col_name].get('dtype', 'unknown')
+                                new_type = updated_schema[col_name].get('dtype', 'unknown')
+                                
+                                if old_type != new_type:
+                                    changes_found = True
+                                    st.write(f"📝 **{col_name}**: {old_type} → {new_type}")
+                        
+                        if not changes_found:
+                            st.info("No schema changes detected from your instruction.")
+                        else:
+                            # Store proposed changes for approval
+                            st.session_state.proposed_schema = updated_schema
+                            st.session_state.nl_instruction_used = nl_instruction
+                            
+                            col_approve, col_reject = st.columns(2)
+                            
+                            with col_approve:
+                                if st.button("✅ Approve Changes", key="approve_nl_changes"):
+                                    st.session_state.schema = updated_schema
+                                    st.success("Schema changes applied successfully!")
+                                    logger.log("NL schema changes applied", {
+                                        "instruction": nl_instruction,
+                                        "changes": updated_schema
+                                    })
+                                    st.rerun()
+                            
+                            with col_reject:
+                                if st.button("❌ Reject Changes", key="reject_nl_changes"):
+                                    if 'proposed_schema' in st.session_state:
+                                        del st.session_state.proposed_schema
+                                    if 'nl_instruction_used' in st.session_state:
+                                        del st.session_state.nl_instruction_used
+                                    st.info("Changes rejected. Schema unchanged.")
+                                    st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Error processing NL instruction: {str(e)}")
+                        logger.log("NL schema processing error", {"error": str(e)})
+            else:
+                st.warning("Please enter an instruction first.")
     
-    # Apply schema changes
-    if st.button("Apply Schema Changes", type="primary"):
+    # Apply schema changes section
+    st.subheader("Apply Schema Changes")
+    
+    # Show manual changes if any
+    if edited_schema != st.session_state.schema:
+        st.write("📝 Manual changes detected:")
+        for col_name in edited_schema.keys():
+            old_type = st.session_state.schema[col_name].get('dtype', 'unknown')
+            new_type = edited_schema[col_name].get('dtype', 'unknown')
+            if old_type != new_type:
+                st.write(f"• **{col_name}**: {old_type} → {new_type}")
+    
+    # Apply changes button
+    if st.button("Apply Schema Changes", type="primary", key="apply_schema_button"):
         with st.spinner("Applying schema changes..."):
             try:
+                # Use edited schema if changes were made manually
+                final_schema = edited_schema if edited_schema != st.session_state.schema else st.session_state.schema
+                
                 st.session_state.data = schema_manager.apply_schema_changes(
                     st.session_state.data, 
-                    st.session_state.schema
+                    final_schema
                 )
-                logger.log("Schema changes applied", st.session_state.schema)
+                st.session_state.schema = final_schema
+                
+                logger.log("Schema changes applied", final_schema)
                 st.success("Schema changes applied successfully!")
                 
-                if st.button("Proceed to Data Analysis"):
+                # Show proceed button
+                st.write("---")
+                if st.button("🔍 Proceed to Data Analysis", type="primary", key="proceed_to_analysis"):
                     st.session_state.current_step = 'analysis'
                     st.rerun()
                     
@@ -339,10 +403,15 @@ def handle_data_correction(logger, llm_client):
     # User input for additional instructions
     user_instructions = st.text_area(
         "Additional correction instructions (optional)",
-        placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels'"
+        placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels'",
+        key="correction_instructions"
     )
     
-    if st.button("Generate Correction Code"):
+    if st.button("Generate Correction Code", key="generate_correction_button"):
+        if not llm_client or not llm_client.client:
+            st.error("LLM client not available. Please check your OpenAI API key.")
+            return
+            
         with st.spinner("Generating correction strategy..."):
             try:
                 correction_code, strategy_summary = data_corrector.generate_correction_code(
@@ -359,35 +428,71 @@ def handle_data_correction(logger, llm_client):
                     "strategy_summary": strategy_summary
                 })
                 
+                st.success("Correction code generated successfully!")
+                st.rerun()
+                
             except Exception as e:
                 st.error(f"Error generating correction code: {str(e)}")
+                logger.log("Correction code generation error", {"error": str(e)})
                 return
     
     # Display generated code and strategy
-    if hasattr(st.session_state, 'correction_code'):
-        st.subheader("Correction Strategy")
-        st.text_area("Strategy Summary", st.session_state.strategy_summary, height=100)
+    if hasattr(st.session_state, 'correction_code') and st.session_state.correction_code:
+        st.subheader("📋 Correction Strategy")
+        st.info(st.session_state.strategy_summary)
         
-        st.subheader("Generated Correction Code")
+        st.subheader("🔧 Generated Correction Code")
         st.code(st.session_state.correction_code, language='python')
         
-        col1, col2 = st.columns(2)
+        # Action buttons
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("Execute Correction", type="primary"):
+            if st.button("✅ Execute Correction", type="primary", key="execute_correction_button"):
                 execute_correction(data_corrector, logger)
         
         with col2:
-            if st.button("Modify Code"):
-                modified_code = st.text_area(
-                    "Modify the correction code",
-                    value=st.session_state.correction_code,
-                    height=300
-                )
-                
-                if st.button("Apply Modified Code"):
+            if st.button("✏️ Modify Code", key="modify_code_button"):
+                st.session_state.show_code_editor = True
+                st.rerun()
+        
+        with col3:
+            if st.button("🔄 Regenerate Code", key="regenerate_code_button"):
+                # Clear existing code to trigger regeneration
+                if 'correction_code' in st.session_state:
+                    del st.session_state.correction_code
+                if 'strategy_summary' in st.session_state:
+                    del st.session_state.strategy_summary
+                st.rerun()
+        
+        # Code editor (if user wants to modify)
+        if hasattr(st.session_state, 'show_code_editor') and st.session_state.show_code_editor:
+            st.subheader("✏️ Modify Correction Code")
+            
+            modified_code = st.text_area(
+                "Edit the correction code:",
+                value=st.session_state.correction_code,
+                height=400,
+                key="code_editor"
+            )
+            
+            col_save, col_cancel = st.columns(2)
+            
+            with col_save:
+                if st.button("💾 Save Changes", key="save_modified_code"):
                     st.session_state.correction_code = modified_code
-                    execute_correction(data_corrector, logger)
+                    st.session_state.show_code_editor = False
+                    st.success("Code updated successfully!")
+                    st.rerun()
+            
+            with col_cancel:
+                if st.button("❌ Cancel", key="cancel_code_edit"):
+                    st.session_state.show_code_editor = False
+                    st.rerun()
+    
+    else:
+        st.info("👆 Click 'Generate Correction Code' to create a data cleaning strategy.")
+
 
 def execute_correction(data_corrector, logger):
     """Execute the correction code"""
@@ -398,30 +503,60 @@ def execute_correction(data_corrector, logger):
                 st.session_state.correction_code
             )
             
-            st.session_state.data = corrected_data
-            logger.log("Data correction executed", execution_log)
-            
-            st.success("Data correction completed successfully!")
-            
-            # Show before/after comparison
-            st.subheader("Correction Results")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.text("Original Data Shape")
-                st.text(f"{st.session_state.original_data.shape}")
+            if execution_log['success']:
+                st.session_state.data = corrected_data
+                logger.log("Data correction executed", execution_log)
                 
-            with col2:
-                st.text("Corrected Data Shape")
-                st.text(f"{corrected_data.shape}")
-            
-            if st.button("Proceed to Finalization", type="primary"):
-                st.session_state.current_step = 'finalization'
-                st.rerun()
+                st.success("🎉 Data correction completed successfully!")
                 
+                # Show before/after comparison
+                st.subheader("📊 Correction Results")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Original Rows", execution_log['original_shape'][0])
+                
+                with col2:
+                    st.metric("Final Rows", execution_log['final_shape'][0])
+                
+                with col3:
+                    rows_removed = execution_log.get('rows_removed', 0)
+                    st.metric("Rows Removed", rows_removed)
+                
+                # Show execution output
+                if execution_log.get('output'):
+                    st.subheader("📋 Execution Log")
+                    for line in execution_log['output']:
+                        if line.strip():
+                            st.text(line)
+                
+                # Proceed button
+                st.write("---")
+                if st.button("🎯 Proceed to Finalization", type="primary", key="proceed_to_finalization"):
+                    st.session_state.current_step = 'finalization'
+                    st.rerun()
+            else:
+                st.error("❌ Data correction failed!")
+                
+                # Show errors
+                if execution_log.get('errors'):
+                    st.subheader("🚨 Errors")
+                    for error in execution_log['errors']:
+                        st.error(f"**{error['type']}**: {error['message']}")
+                        
+                        # Show traceback in expander
+                        if 'traceback' in error:
+                            with st.expander("Show detailed error"):
+                                st.code(error['traceback'])
+                
+                st.info("💡 Try modifying the code or regenerating with different instructions.")
+                    
         except Exception as e:
-            st.error(f"Error executing correction: {str(e)}")
-            logger.log("Correction execution error", {"error": str(e), "traceback": traceback.format_exc()})
+            st.error(f"❌ Error executing correction: {str(e)}")
+            logger.log("Correction execution error", {
+                "error": str(e), 
+                "traceback": traceback.format_exc()
+            })
 
 def handle_finalization(logger, llm_client):
     """Handle final pipeline generation"""
