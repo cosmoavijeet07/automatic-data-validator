@@ -270,12 +270,20 @@ def handle_data_analysis(logger, llm_client):
             # Generate basic quality report
             quality_report = data_analyzer.generate_quality_report(st.session_state.data)
             
-            # Enhanced LLM analysis
-            enhanced_analysis = data_analyzer.enhanced_llm_analysis(
-                st.session_state.data, 
-                st.session_state.schema,
-                quality_report
-            )
+            # Enhanced LLM analysis (if available)
+            if llm_client and llm_client.client:
+                try:
+                    enhanced_analysis = data_analyzer.enhanced_llm_analysis(
+                        st.session_state.data, 
+                        st.session_state.schema,
+                        quality_report
+                    )
+                except Exception as e:
+                    st.warning(f"LLM analysis failed: {str(e)}. Using basic analysis.")
+                    enhanced_analysis = data_analyzer._fallback_analysis(quality_report)
+            else:
+                st.info("LLM not available. Using basic analysis.")
+                enhanced_analysis = data_analyzer._fallback_analysis(quality_report)
             
             logger.log("Data analysis completed", {
                 "quality_report": quality_report,
@@ -294,14 +302,15 @@ def handle_data_analysis(logger, llm_client):
     
     with col1:
         st.text("Basic Quality Metrics")
-        for key, value in quality_report.items():
-            if isinstance(value, dict):
-                st.json(value)
-            else:
-                st.metric(key.replace('_', ' ').title(), value)
+        basic_info = quality_report.get('basic_info', {})
+        st.metric("Data Quality Score", f"{quality_report.get('quality_score', 0):.1f}/100")
+        st.metric("Total Rows", basic_info.get('row_count', 0))
+        st.metric("Total Columns", basic_info.get('column_count', 0))
+        st.metric("Missing Values", f"{quality_report['missing_values']['missing_percentage']:.1f}%")
+        st.metric("Duplicates", f"{quality_report['duplicates']['duplicate_percentage']:.1f}%")
     
     with col2:
-        st.text("Enhanced LLM Analysis")
+        st.text("Enhanced Analysis")
         st.text_area("Analysis Summary", enhanced_analysis.get('summary', ''), height=200)
         
         if 'recommendations' in enhanced_analysis:

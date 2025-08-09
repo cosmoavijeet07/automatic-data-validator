@@ -2,7 +2,6 @@
 LLM client module for handling API interactions with language models
 """
 
-import openai
 import json
 import time
 from typing import Dict, Any, List, Optional
@@ -20,11 +19,11 @@ class LLMClient:
         
         # Initialize OpenAI client
         try:
-            openai.api_key = OPENAI_API_KEY
-            self.client = openai
+            import openai
+            self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
         except Exception as e:
             st.error(f"Failed to initialize LLM client: {str(e)}")
-            raise
+            self.client = None
     
     def get_completion(self, prompt: str, system_prompt: str = None, 
                       temperature: float = 0.3, max_tokens: int = 2000) -> str:
@@ -40,6 +39,9 @@ class LLMClient:
         Returns:
             LLM response as string
         """
+        if not self.client:
+            raise Exception("OpenAI client not initialized. Please check your API key.")
+        
         messages = []
         
         if system_prompt:
@@ -49,7 +51,7 @@ class LLMClient:
         
         for attempt in range(self.max_retries):
             try:
-                response = self.client.ChatCompletion.create(
+                response = self.client.chat.completions.create(
                     model=self.model_id,
                     messages=messages,
                     temperature=temperature,
@@ -59,26 +61,32 @@ class LLMClient:
                 
                 return response.choices[0].message.content.strip()
                 
-            except openai.error.RateLimitError:
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
-                    continue
-                else:
-                    raise Exception("Rate limit exceeded. Please try again later.")
-            
-            except openai.error.APIError as e:
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
-                    continue
-                else:
-                    raise Exception(f"API error: {str(e)}")
-            
             except Exception as e:
-                if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
-                    continue
+                error_str = str(e)
+                
+                # Handle rate limits
+                if "rate_limit" in error_str.lower() or "429" in error_str:
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
+                        continue
+                    else:
+                        raise Exception("Rate limit exceeded. Please try again later.")
+                
+                # Handle API errors
+                elif "api" in error_str.lower() or "400" in error_str or "401" in error_str:
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        raise Exception(f"API error: {str(e)}")
+                
+                # Handle other errors
                 else:
-                    raise Exception(f"Unexpected error: {str(e)}")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        raise Exception(f"Unexpected error: {str(e)}")
         
         raise Exception("Failed to get completion after maximum retries")
     

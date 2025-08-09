@@ -23,13 +23,13 @@ for directory in [UPLOAD_DIR, TEMP_DIR, LOGS_DIR, OUTPUTS_DIR]:
 
 # LLM Model configurations
 MODELS = {
-    "GPT 4.1": "gpt-4.1-2025-04-14",  # default
-    "GPT O4 Mini": "o4-mini-2025-04-16"
+    "GPT 4.1": "gpt-4o",  # Use available GPT-4 model
+    "GPT O4 Mini": "gpt-4o-mini"  # Use available GPT-4 mini model
 }
 
 # OpenAI API settings (you'll need to set these environment variables)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
-# OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 # Data processing settings
 DEFAULT_SAMPLE_SIZE = 1000  # For large datasets, sample this many rows for analysis

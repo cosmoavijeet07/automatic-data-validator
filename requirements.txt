@@ -1,40 +1,26 @@
-# Core dependencies for AI-Powered Data Cleaning Platform
+# Minimal requirements for Python 3.13 compatibility
+# Essential packages only - no data profiling libraries
 
-# Web framework
-streamlit
+# Core web framework
+streamlit>=1.28.0
 
-# Data processing
-pandas
-numpy
+# Data processing (essential)
+pandas>=1.5.0
+numpy>=1.24.0
 
-# Excel support
-openpyxl
-xlsxwriter
+# File format support
+openpyxl>=3.1.0
 
-# Statistical analysis
-scipy
+# Basic statistics
+scipy>=1.10.0
 
 # Text processing
-nltk
+nltk>=3.8.0
 
-# API client (OpenAI)
-openai
+# LLM integration
+openai>=1.0.0
 
 # Utilities
-python-dateutil
-pathlib2
+requests>=2.31.0
+python-dotenv>=1.0.0
 
-# Data profiling (optional - install one of these)
-# ydata-profiling>=4.5.0
-# pandas-profiling  # Alternative
-sweetviz>=2.2.0  # Alternative
-
-# Development dependencies (optional)
-# pytest>=7.4.0
-# pytest-cov>=4.1.0
-# black>=23.7.0
-# flake8>=6.0.0
-
-# Additional utilities
-requests
-python-dotenv

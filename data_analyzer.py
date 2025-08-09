@@ -13,6 +13,25 @@ from config import (MISSING_VALUE_THRESHOLD, OUTLIER_THRESHOLD,
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
+# Try to import profiling libraries (optional)
+PROFILING_AVAILABLE = False
+try:
+    import ydata_profiling
+    PROFILING_AVAILABLE = True
+    PROFILING_LIB = 'ydata_profiling'
+except ImportError:
+    try:
+        import pandas_profiling
+        PROFILING_AVAILABLE = True
+        PROFILING_LIB = 'pandas_profiling'
+    except ImportError:
+        try:
+            import sweetviz
+            PROFILING_AVAILABLE = True
+            PROFILING_LIB = 'sweetviz'
+        except ImportError:
+            PROFILING_AVAILABLE = False
+
 class DataAnalyzer:
     """Comprehensive data quality analysis"""
     
@@ -496,12 +515,16 @@ class DataAnalyzer:
             }}
             """
             
-            response = self.llm_client.get_json_completion(prompt)
-            
-            if 'error' not in response:
-                return response
+            if self.llm_client and self.llm_client.client:
+                response = self.llm_client.get_json_completion(prompt)
+                
+                if 'error' not in response:
+                    return response
+                else:
+                    # Fallback to basic analysis
+                    return self._fallback_analysis(quality_report)
             else:
-                # Fallback to basic analysis
+                # No LLM available, use fallback
                 return self._fallback_analysis(quality_report)
                 
         except Exception as e:
