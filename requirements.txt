@@ -1,32 +1,32 @@
 # Core dependencies for AI-Powered Data Cleaning Platform
 
 # Web framework
-streamlit>=1.28.0
+streamlit
 
 # Data processing
-pandas>=1.5.0
-numpy>=1.24.0
+pandas
+numpy
 
 # Excel support
-openpyxl>=3.1.0
-xlsxwriter>=3.1.0
+openpyxl
+xlsxwriter
 
 # Statistical analysis
-scipy>=1.10.0
+scipy
 
 # Text processing
-nltk>=3.8.0
+nltk
 
 # API client (OpenAI)
-openai>=1.0.0
+openai
 
 # Utilities
-python-dateutil>=2.8.0
-pathlib2>=2.3.0
+python-dateutil
+pathlib2
 
 # Data profiling (optional - install one of these)
 # ydata-profiling>=4.5.0
-pandas-profiling>=3.6.0  # Alternative
+pandas-profiling  # Alternative
 # sweetviz>=2.2.0  # Alternative
 
 # Development dependencies (optional)
@@ -36,5 +36,5 @@ pandas-profiling>=3.6.0  # Alternative
 # flake8>=6.0.0
 
 # Additional utilities
-requests>=2.31.0
-python-dotenv>=1.0.0
+requests
+python-dotenv
