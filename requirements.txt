@@ -1,15 +1,40 @@
-streamlit
-pandas
-numpy
-openpyxl
-xlrd
-duckdb
-openai
-python-dotenv
-plotly
-scikit-learn
-nltk
-pyarrow
-jsonschema
-matplotlib
-seaborn
+# Core dependencies for AI-Powered Data Cleaning Platform
+
+# Web framework
+streamlit>=1.28.0
+
+# Data processing
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Excel support
+openpyxl>=3.1.0
+xlsxwriter>=3.1.0
+
+# Statistical analysis
+scipy>=1.10.0
+
+# Text processing
+nltk>=3.8.0
+
+# API client (OpenAI)
+openai>=1.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+pathlib2>=2.3.0
+
+# Data profiling (optional - install one of these)
+# ydata-profiling>=4.5.0
+pandas-profiling>=3.6.0  # Alternative
+# sweetviz>=2.2.0  # Alternative
+
+# Development dependencies (optional)
+# pytest>=7.4.0
+# pytest-cov>=4.1.0
+# black>=23.7.0
+# flake8>=6.0.0
+
+# Additional utilities
+requests>=2.31.0
+python-dotenv>=1.0.0

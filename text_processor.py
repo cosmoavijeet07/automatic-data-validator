@@ -1,356 +1,718 @@
 """
-Text Processing Module for handling text data cleaning (without ChromaDB)
+Text processor module for handling text data cleaning and vector database operations
 """
+
 import re
-import logging
-from typing import List, Dict, Any, Optional, Tuple, Union
-import pandas as pd
-import numpy as np
+import string
 import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.stem import WordNetLemmatizer, PorterStemmer
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from typing import Dict, Any, List, Tuple, Optional
+import pandas as pd
+from pathlib import Path
+from config import VECTOR_DB_CHUNK_SIZE, VECTOR_DB_OVERLAP, DEFAULT_EMBEDDING_MODEL
 
 # Download required NLTK data
 try:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
-    nltk.download('wordnet', quiet=True)
-    nltk.download('averaged_perceptron_tagger', quiet=True)
-except:
-    pass
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+
+try:
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    nltk.download('wordnet')
+
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.stem import WordNetLemmatizer, PorterStemmer
 
 class TextProcessor:
-    def __init__(self, session_id: str):
-        """Initialize text processor"""
-        self.session_id = session_id
-        self.text_data = []
-        self.cleaned_text = []
-        self.vectorizer = None
-        self.vectors = None
+    """Handles text data processing and cleaning operations"""
+    
+    def __init__(self, llm_client):
+        self.llm_client = llm_client
+        self.chunk_size = VECTOR_DB_CHUNK_SIZE
+        self.chunk_overlap = VECTOR_DB_OVERLAP
+        self.embedding_model = DEFAULT_EMBEDDING_MODEL
+        
+        # Initialize NLTK components
+        self.stop_words = set(stopwords.words('english'))
         self.lemmatizer = WordNetLemmatizer()
         self.stemmer = PorterStemmer()
         
-        # Store vectors in memory instead of ChromaDB
-        self.vector_store = {}
-        self.collection = None
+        # Common text cleaning patterns
+        self.cleaning_patterns = {
+            'urls': re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'),
+            'emails': re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'),
+            'phone_numbers': re.compile(r'(\+\d{1,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}'),
+            'special_chars': re.compile(r'[^a-zA-Z0-9\s]'),
+            'extra_whitespace': re.compile(r'\s+'),
+            'html_tags': re.compile(r'<[^<]+?>'),
+            'numbers': re.compile(r'\b\d+\b')
+        }
     
-    def load_text_data(self, text_data: Union[str, List[str], pd.Series]) -> Tuple[bool, str]:
-        """Load text data from various sources"""
-        try:
-            if isinstance(text_data, str):
-                self.text_data = [text_data]
-            elif isinstance(text_data, pd.Series):
-                self.text_data = text_data.tolist()
-            elif isinstance(text_data, list):
-                self.text_data = text_data
-            else:
-                return False, "Unsupported text data format"
-            
-            return True, f"Loaded {len(self.text_data)} text documents"
-            
-        except Exception as e:
-            logging.error(f"Error loading text data: {e}")
-            return False, str(e)
-    
-    def get_text_preview(self, n_chars: int = 500) -> str:
-        """Get preview of text data"""
-        if not self.text_data:
-            return "No text data loaded"
+    def analyze_text_data(self, text_data: str) -> Dict[str, Any]:
+        """
+        Analyze text data and provide statistics
         
-        preview = self.text_data[0][:n_chars]
-        if len(self.text_data[0]) > n_chars:
-            preview += "..."
-        
-        return preview
-    
-    def clean_text(
-        self,
-        lowercase: bool = True,
-        remove_punctuation: bool = True,
-        remove_numbers: bool = False,
-        remove_whitespace: bool = True,
-        remove_stopwords: bool = True,
-        lemmatize: bool = True,
-        stem: bool = False,
-        custom_stopwords: List[str] = None
-    ) -> Tuple[bool, str]:
-        """Clean text data with various options"""
-        try:
-            self.cleaned_text = []
+        Args:
+            text_data: Raw text data to analyze
             
-            # Get stopwords
-            try:
-                stop_words = set(stopwords.words('english'))
-            except:
-                # If NLTK data not available, use basic stopwords
-                stop_words = set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-                                 'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were'])
-            
-            if custom_stopwords:
-                stop_words.update(custom_stopwords)
-            
-            for text in self.text_data:
-                # Lowercase
-                if lowercase:
-                    text = text.lower()
-                
-                # Remove HTML tags
-                text = re.sub(r'<[^>]+>', '', text)
-                
-                # Remove URLs
-                text = re.sub(r'http\S+|www.\S+', '', text)
-                
-                # Remove email addresses
-                text = re.sub(r'\S+@\S+', '', text)
-                
-                # Remove punctuation
-                if remove_punctuation:
-                    text = re.sub(r'[^\w\s]', ' ', text)
-                
-                # Remove numbers
-                if remove_numbers:
-                    text = re.sub(r'\d+', '', text)
-                
-                # Remove extra whitespace
-                if remove_whitespace:
-                    text = ' '.join(text.split())
-                
-                # Tokenize
-                try:
-                    tokens = word_tokenize(text)
-                except:
-                    # Fallback to simple tokenization
-                    tokens = text.split()
-                
-                # Remove stopwords
-                if remove_stopwords:
-                    tokens = [t for t in tokens if t not in stop_words]
-                
-                # Lemmatization
-                if lemmatize and not stem:
-                    try:
-                        tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
-                    except:
-                        pass  # Skip if lemmatization fails
-                
-                # Stemming
-                if stem and not lemmatize:
-                    try:
-                        tokens = [self.stemmer.stem(t) for t in tokens]
-                    except:
-                        pass  # Skip if stemming fails
-                
-                # Join tokens back
-                cleaned = ' '.join(tokens)
-                self.cleaned_text.append(cleaned)
-            
-            return True, "Text cleaned successfully"
-            
-        except Exception as e:
-            logging.error(f"Error cleaning text: {e}")
-            return False, str(e)
-    
-    def extract_features(
-        self,
-        method: str = 'tfidf',
-        max_features: int = 1000,
-        ngram_range: Tuple[int, int] = (1, 1)
-    ) -> Tuple[bool, str]:
-        """Extract features from text using various methods"""
-        try:
-            text_to_use = self.cleaned_text if self.cleaned_text else self.text_data
-            
-            if method == 'tfidf':
-                self.vectorizer = TfidfVectorizer(
-                    max_features=max_features,
-                    ngram_range=ngram_range
-                )
-            elif method == 'count':
-                self.vectorizer = CountVectorizer(
-                    max_features=max_features,
-                    ngram_range=ngram_range
-                )
-            else:
-                return False, f"Unknown method: {method}"
-            
-            self.vectors = self.vectorizer.fit_transform(text_to_use)
-            
-            # Store vectors in memory
-            for i, text in enumerate(text_to_use):
-                self.vector_store[f"doc_{i}"] = {
-                    'text': text,
-                    'vector': self.vectors[i].toarray()[0]
-                }
-            
-            return True, f"Extracted {self.vectors.shape[1]} features from {self.vectors.shape[0]} documents"
-            
-        except Exception as e:
-            logging.error(f"Error extracting features: {e}")
-            return False, str(e)
-    
-    def get_text_statistics(self) -> Dict[str, Any]:
-        """Get statistics about text data"""
-        if not self.text_data:
-            return {}
-        
-        stats = {
-            'num_documents': len(self.text_data),
-            'total_characters': sum(len(t) for t in self.text_data),
-            'avg_characters': np.mean([len(t) for t in self.text_data]),
-            'total_words': sum(len(t.split()) for t in self.text_data),
-            'avg_words': np.mean([len(t.split()) for t in self.text_data]),
-            'unique_words': len(set(' '.join(self.text_data).split()))
+        Returns:
+            Dictionary containing text analysis results
+        """
+        analysis = {
+            'basic_stats': self._get_basic_text_stats(text_data),
+            'content_analysis': self._analyze_content(text_data),
+            'quality_issues': self._identify_quality_issues(text_data),
+            'cleaning_suggestions': []
         }
         
-        if self.cleaned_text:
-            stats['cleaned_total_words'] = sum(len(t.split()) for t in self.cleaned_text)
-            stats['cleaned_avg_words'] = np.mean([len(t.split()) for t in self.cleaned_text])
-            stats['cleaned_unique_words'] = len(set(' '.join(self.cleaned_text).split()))
+        # Generate cleaning suggestions based on analysis
+        analysis['cleaning_suggestions'] = self._generate_cleaning_suggestions(analysis)
         
-        if self.vectors is not None:
-            stats['vector_shape'] = self.vectors.shape
-            stats['vector_density'] = self.vectors.nnz / (self.vectors.shape[0] * self.vectors.shape[1])
-        
-        return stats
+        return analysis
     
-    def get_top_terms(self, n: int = 20) -> List[Tuple[str, float]]:
-        """Get top terms from vectorized text"""
-        if self.vectorizer is None or self.vectors is None:
-            return []
+    def _get_basic_text_stats(self, text: str) -> Dict[str, Any]:
+        """Get basic text statistics"""
+        sentences = sent_tokenize(text)
+        words = word_tokenize(text.lower())
         
-        # Get feature names
-        feature_names = self.vectorizer.get_feature_names_out()
+        return {
+            'total_characters': len(text),
+            'total_words': len(words),
+            'total_sentences': len(sentences),
+            'total_lines': len(text.splitlines()),
+            'average_words_per_sentence': len(words) / len(sentences) if sentences else 0,
+            'average_chars_per_word': len(text) / len(words) if words else 0,
+            'unique_words': len(set(words)),
+            'vocabulary_richness': len(set(words)) / len(words) if words else 0
+        }
+    
+    def _analyze_content(self, text: str) -> Dict[str, Any]:
+        """Analyze content patterns in text"""
+        content_analysis = {
+            'contains_urls': bool(self.cleaning_patterns['urls'].search(text)),
+            'contains_emails': bool(self.cleaning_patterns['emails'].search(text)),
+            'contains_phone_numbers': bool(self.cleaning_patterns['phone_numbers'].search(text)),
+            'contains_html': bool(self.cleaning_patterns['html_tags'].search(text)),
+            'number_count': len(self.cleaning_patterns['numbers'].findall(text)),
+            'special_char_ratio': self._calculate_special_char_ratio(text),
+            'uppercase_ratio': self._calculate_uppercase_ratio(text),
+            'encoding_issues': self._detect_encoding_issues(text)
+        }
         
-        # Calculate term frequencies
-        if hasattr(self.vectorizer, 'idf_'):
-            # TF-IDF: use IDF scores
-            scores = self.vectorizer.idf_
+        # Language detection (simplified)
+        content_analysis['likely_language'] = self._detect_language(text)
+        
+        return content_analysis
+    
+    def _identify_quality_issues(self, text: str) -> List[Dict[str, Any]]:
+        """Identify quality issues in text data"""
+        issues = []
+        
+        # Check for excessive whitespace
+        if len(re.findall(r'\s{3,}', text)) > 0:
+            issues.append({
+                'type': 'excessive_whitespace',
+                'severity': 'medium',
+                'description': 'Text contains excessive whitespace'
+            })
+        
+        # Check for mixed encodings
+        try:
+            text.encode('ascii')
+        except UnicodeEncodeError:
+            issues.append({
+                'type': 'encoding_issues',
+                'severity': 'medium',
+                'description': 'Text contains non-ASCII characters that may need cleaning'
+            })
+        
+        # Check for very long lines
+        long_lines = [line for line in text.splitlines() if len(line) > 1000]
+        if long_lines:
+            issues.append({
+                'type': 'long_lines',
+                'severity': 'low',
+                'description': f'Found {len(long_lines)} lines longer than 1000 characters'
+            })
+        
+        # Check for inconsistent line endings
+        if '\r\n' in text and '\n' in text.replace('\r\n', ''):
+            issues.append({
+                'type': 'mixed_line_endings',
+                'severity': 'low',
+                'description': 'Text has mixed line ending formats'
+            })
+        
+        return issues
+    
+    def _calculate_special_char_ratio(self, text: str) -> float:
+        """Calculate ratio of special characters"""
+        special_chars = sum(1 for char in text if char in string.punctuation)
+        return special_chars / len(text) if text else 0
+    
+    def _calculate_uppercase_ratio(self, text: str) -> float:
+        """Calculate ratio of uppercase characters"""
+        uppercase_chars = sum(1 for char in text if char.isupper())
+        return uppercase_chars / len(text) if text else 0
+    
+    def _detect_encoding_issues(self, text: str) -> bool:
+        """Detect potential encoding issues"""
+        # Look for common encoding artifacts
+        encoding_artifacts = ['â€™', 'â€œ', 'â€', 'Ã©', 'Ã¡', 'Ã­', 'Ã³']
+        return any(artifact in text for artifact in encoding_artifacts)
+    
+    def _detect_language(self, text: str) -> str:
+        """Simple language detection based on common words"""
+        words = word_tokenize(text.lower())
+        
+        # English common words
+        english_words = {'the', 'and', 'is', 'in', 'to', 'of', 'a', 'that', 'it', 'with', 'for', 'as', 'was', 'on', 'are'}
+        english_count = sum(1 for word in words if word in english_words)
+        
+        if english_count / len(words) > 0.1 if words else 0:
+            return 'english'
         else:
-            # Count vectorizer: use sum of counts
-            scores = self.vectors.sum(axis=0).A1
-        
-        # Get top terms
-        top_indices = scores.argsort()[-n:][::-1]
-        top_terms = [(feature_names[i], scores[i]) for i in top_indices]
-        
-        return top_terms
+            return 'unknown'
     
-    def create_vector_database(
-        self,
-        collection_name: str = "text_collection"
-    ) -> Tuple[bool, str]:
-        """Create in-memory vector database for text data"""
+    def _generate_cleaning_suggestions(self, analysis: Dict[str, Any]) -> List[str]:
+        """Generate cleaning suggestions based on analysis"""
+        suggestions = []
+        
+        content = analysis['content_analysis']
+        issues = analysis['quality_issues']
+        
+        if content['contains_html']:
+            suggestions.append("Remove HTML tags")
+        
+        if content['contains_urls']:
+            suggestions.append("Remove or extract URLs")
+        
+        if content['contains_emails']:
+            suggestions.append("Remove or extract email addresses")
+        
+        if content['special_char_ratio'] > 0.1:
+            suggestions.append("Clean excessive special characters")
+        
+        if any(issue['type'] == 'excessive_whitespace' for issue in issues):
+            suggestions.append("Normalize whitespace")
+        
+        if content['encoding_issues']:
+            suggestions.append("Fix encoding issues")
+        
+        suggestions.extend([
+            "Convert to lowercase",
+            "Remove stop words",
+            "Apply lemmatization or stemming",
+            "Tokenize text"
+        ])
+        
+        return suggestions
+    
+    def generate_cleaning_code(self, text_data: str, user_instructions: str = "") -> Tuple[str, str]:
+        """
+        Generate text cleaning code using LLM
+        
+        Args:
+            text_data: Sample text data
+            user_instructions: Additional user instructions
+            
+        Returns:
+            Tuple of (cleaning_code, strategy_summary)
+        """
         try:
-            # Store collection name
-            self.collection = f"{collection_name}_{self.session_id}"
+            # Analyze the text
+            analysis = self.analyze_text_data(text_data[:5000])  # Use sample for analysis
             
-            # Add documents to memory store
-            text_to_use = self.cleaned_text if self.cleaned_text else self.text_data
+            # Prepare context for LLM
+            context = {
+                'text_sample': text_data[:1000],  # First 1000 characters
+                'analysis': analysis,
+                'user_instructions': user_instructions
+            }
             
-            # Create embeddings if not already done
-            if self.vectors is None:
-                # Create simple embeddings
-                vectorizer = TfidfVectorizer(max_features=100)
-                vectors = vectorizer.fit_transform(text_to_use)
-                
-                for i, text in enumerate(text_to_use):
-                    self.vector_store[f"doc_{i}"] = {
-                        'text': text,
-                        'vector': vectors[i].toarray()[0],
-                        'metadata': {'index': i}
+            prompt = f"""
+            Generate Python code to clean the following text data:
+            
+            Text Sample:
+            {context['text_sample']}
+            
+            Analysis Results:
+            {analysis}
+            
+            User Instructions: {user_instructions}
+            
+            Create a function called 'clean_text' that:
+            1. Takes text as input parameter
+            2. Applies appropriate cleaning operations
+            3. Returns cleaned text
+            4. Includes proper error handling
+            5. Uses libraries: re, nltk, string
+            
+            Address the identified issues and apply common text preprocessing steps.
+            Include detailed comments explaining each step.
+            """
+            
+            cleaning_code = self.llm_client.generate_code(prompt)
+            
+            # Generate strategy summary
+            strategy_summary = self.llm_client.summarize_strategy(
+                cleaning_code, 
+                f"Text cleaning for {len(text_data)} characters with {len(analysis['quality_issues'])} quality issues"
+            )
+            
+            return cleaning_code, strategy_summary
+            
+        except Exception as e:
+            raise ValueError(f"Failed to generate text cleaning code: {str(e)}")
+    
+    def execute_cleaning_code(self, text_data: str, code: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Execute text cleaning code
+        
+        Args:
+            text_data: Text to clean
+            code: Cleaning code to execute
+            
+        Returns:
+            Tuple of (cleaned_text, execution_log)
+        """
+        execution_log = {
+            'success': False,
+            'original_length': len(text_data),
+            'final_length': None,
+            'execution_time': None,
+            'errors': [],
+            'output': []
+        }
+        
+        try:
+            import time
+            from io import StringIO
+            import sys
+            
+            start_time = time.time()
+            
+            # Capture output
+            captured_output = StringIO()
+            sys.stdout = captured_output
+            
+            # Create execution environment
+            exec_globals = {
+                're': re,
+                'string': string,
+                'nltk': nltk,
+                'word_tokenize': word_tokenize,
+                'sent_tokenize': sent_tokenize,
+                'stopwords': stopwords,
+                'WordNetLemmatizer': WordNetLemmatizer,
+                'PorterStemmer': PorterStemmer,
+                '__builtins__': {}
+            }
+            
+            # Execute the code
+            exec(code, exec_globals)
+            
+            # Get the cleaning function
+            if 'clean_text' not in exec_globals:
+                raise ValueError("Generated code must define a 'clean_text' function")
+            
+            clean_text_func = exec_globals['clean_text']
+            
+            # Execute cleaning
+            cleaned_text = clean_text_func(text_data)
+            
+            # Restore stdout
+            sys.stdout = sys.__stdout__
+            output = captured_output.getvalue()
+            
+            execution_log.update({
+                'success': True,
+                'final_length': len(cleaned_text),
+                'execution_time': time.time() - start_time,
+                'output': output.split('\n') if output else [],
+                'length_reduction': len(text_data) - len(cleaned_text)
+            })
+            
+            return cleaned_text, execution_log
+            
+        except Exception as e:
+            sys.stdout = sys.__stdout__
+            
+            execution_log['errors'].append({
+                'type': type(e).__name__,
+                'message': str(e)
+            })
+            
+            return text_data, execution_log
+    
+    def chunk_text_for_vector_db(self, text: str, chunk_size: int = None, 
+                                 overlap: int = None) -> List[Dict[str, Any]]:
+        """
+        Chunk text for vector database storage
+        
+        Args:
+            text: Text to chunk
+            chunk_size: Maximum characters per chunk
+            overlap: Overlap between chunks
+            
+        Returns:
+            List of chunk dictionaries
+        """
+        chunk_size = chunk_size or self.chunk_size
+        overlap = overlap or self.chunk_overlap
+        
+        chunks = []
+        sentences = sent_tokenize(text)
+        
+        current_chunk = ""
+        current_length = 0
+        chunk_id = 0
+        
+        for sentence in sentences:
+            sentence_length = len(sentence)
+            
+            # If adding this sentence would exceed chunk size
+            if current_length + sentence_length > chunk_size and current_chunk:
+                # Save current chunk
+                chunks.append({
+                    'id': chunk_id,
+                    'text': current_chunk.strip(),
+                    'length': current_length,
+                    'start_sentence': chunk_id * (chunk_size // 100),  # Approximate
+                    'metadata': {
+                        'chunk_size': current_length,
+                        'sentence_count': len(sent_tokenize(current_chunk))
                     }
-            
-            return True, f"Created in-memory vector store with {len(text_to_use)} documents"
-            
-        except Exception as e:
-            logging.error(f"Error creating vector database: {e}")
-            return False, str(e)
-    
-    def search_similar(
-        self,
-        query: str,
-        n_results: int = 5
-    ) -> List[Dict[str, Any]]:
-        """Search for similar documents using cosine similarity"""
-        try:
-            if not self.vector_store or self.vectorizer is None:
-                return []
-            
-            # Clean query same way as documents
-            cleaned_query = self.clean_single_text(query)
-            
-            # Create query embedding
-            query_vector = self.vectorizer.transform([cleaned_query]).toarray()[0]
-            
-            # Calculate cosine similarities
-            similarities = []
-            for doc_id, doc_data in self.vector_store.items():
-                doc_vector = doc_data['vector']
-                
-                # Cosine similarity
-                similarity = np.dot(query_vector, doc_vector) / (
-                    np.linalg.norm(query_vector) * np.linalg.norm(doc_vector) + 1e-10
-                )
-                
-                similarities.append({
-                    'id': doc_id,
-                    'text': doc_data['text'],
-                    'similarity': similarity
                 })
-            
-            # Sort by similarity and return top n
-            similarities.sort(key=lambda x: x['similarity'], reverse=True)
-            return similarities[:n_results]
-            
-        except Exception as e:
-            logging.error(f"Error searching: {e}")
-            return []
-    
-    def clean_single_text(self, text: str) -> str:
-        """Clean a single text string using same settings as batch cleaning"""
-        # Apply same cleaning as in clean_text method
-        text = text.lower()
-        text = re.sub(r'<[^>]+>', '', text)
-        text = re.sub(r'http\S+|www.\S+', '', text)
-        text = re.sub(r'\S+@\S+', '', text)
-        text = re.sub(r'[^\w\s]', ' ', text)
-        text = ' '.join(text.split())
-        
-        try:
-            tokens = word_tokenize(text)
-            stop_words = set(stopwords.words('english'))
-            tokens = [t for t in tokens if t not in stop_words]
-            tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
-        except:
-            # Fallback to simple processing
-            tokens = text.split()
-            basic_stops = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for'}
-            tokens = [t for t in tokens if t not in basic_stops]
-        
-        return ' '.join(tokens)
-    
-    def export_cleaned_text(self, file_path: str) -> Tuple[bool, str]:
-        """Export cleaned text data"""
-        try:
-            text_to_export = self.cleaned_text if self.cleaned_text else self.text_data
-            
-            if file_path.endswith('.txt'):
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write('\n\n'.join(text_to_export))
-            elif file_path.endswith('.csv'):
-                df = pd.DataFrame({'text': text_to_export})
-                df.to_csv(file_path, index=False)
-            elif file_path.endswith('.json'):
-                import json
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    json.dump(text_to_export, f, indent=2)
+                
+                chunk_id += 1
+                
+                # Start new chunk with overlap
+                if overlap > 0:
+                    overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                    current_chunk = overlap_text + " " + sentence
+                    current_length = len(current_chunk)
+                else:
+                    current_chunk = sentence
+                    current_length = sentence_length
             else:
-                return False, "Unsupported export format"
+                # Add sentence to current chunk
+                if current_chunk:
+                    current_chunk += " " + sentence
+                else:
+                    current_chunk = sentence
+                current_length += sentence_length
+        
+        # Add final chunk if it has content
+        if current_chunk.strip():
+            chunks.append({
+                'id': chunk_id,
+                'text': current_chunk.strip(),
+                'length': current_length,
+                'start_sentence': chunk_id * (chunk_size // 100),
+                'metadata': {
+                    'chunk_size': current_length,
+                    'sentence_count': len(sent_tokenize(current_chunk))
+                }
+            })
+        
+        return chunks
+    
+    def create_vector_database(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Create a simple vector database representation
+        Note: This is a simplified implementation. In production, you'd use
+        libraries like langchain, llamaindex, or chromadb
+        
+        Args:
+            chunks: List of text chunks
             
-            return True, f"Text exported to {file_path}"
+        Returns:
+            Vector database information
+        """
+        vector_db_info = {
+            'total_chunks': len(chunks),
+            'total_text_length': sum(chunk['length'] for chunk in chunks),
+            'average_chunk_size': sum(chunk['length'] for chunk in chunks) / len(chunks) if chunks else 0,
+            'chunks_metadata': [chunk['metadata'] for chunk in chunks],
+            'embedding_model': self.embedding_model,
+            'created_at': pd.Timestamp.now().isoformat()
+        }
+        
+        # In a real implementation, you would:
+        # 1. Generate embeddings for each chunk using the embedding model
+        # 2. Store embeddings in a vector database (e.g., Pinecone, Weaviate, ChromaDB)
+        # 3. Create indexes for efficient similarity search
+        
+        # For now, we'll store the chunks as structured data
+        vector_db_info['chunks'] = chunks
+        
+        return vector_db_info
+    
+    def get_text_cleaning_templates(self) -> Dict[str, str]:
+        """Get predefined text cleaning templates"""
+        templates = {
+            'basic_cleaning': '''
+def clean_text(text):
+    """Basic text cleaning"""
+    import re
+    import string
+    
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Remove HTML tags
+    text = re.sub(r'<[^<]+?>', '', text)
+    
+    # Remove URLs
+    text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
+    
+    # Remove email addresses
+    text = re.sub(r'\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', '', text)
+    
+    # Remove special characters
+    text = re.sub(r'[^a-zA-Z0-9\\s]', '', text)
+    
+    # Remove extra whitespace
+    text = re.sub(r'\\s+', ' ', text).strip()
+    
+    return text
+            ''',
+            
+            'advanced_nlp_cleaning': '''
+def clean_text(text):
+    """Advanced NLP text cleaning"""
+    import re
+    import nltk
+    from nltk.corpus import stopwords
+    from nltk.tokenize import word_tokenize
+    from nltk.stem import WordNetLemmatizer
+    
+    # Initialize
+    stop_words = set(stopwords.words('english'))
+    lemmatizer = WordNetLemmatizer()
+    
+    # Basic cleaning
+    text = text.lower()
+    text = re.sub(r'<[^<]+?>', '', text)  # Remove HTML
+    text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)  # Remove URLs
+    text = re.sub(r'[^a-zA-Z\\s]', '', text)  # Keep only letters and spaces
+    text = re.sub(r'\\s+', ' ', text).strip()  # Normalize whitespace
+    
+    # Tokenization
+    tokens = word_tokenize(text)
+    
+    # Remove stop words and lemmatize
+    cleaned_tokens = []
+    for token in tokens:
+        if token not in stop_words and len(token) > 2:
+            cleaned_tokens.append(lemmatizer.lemmatize(token))
+    
+    return ' '.join(cleaned_tokens)
+            ''',
+            
+            'document_processing': '''
+def clean_text(text):
+    """Document-specific text cleaning"""
+    import re
+    
+    # Fix common encoding issues
+    text = text.replace('â€™', "'")
+    text = text.replace('â€œ', '"')
+    text = text.replace('â€', '"')
+    text = text.replace('â€¢', '•')
+    
+    # Normalize line breaks
+    text = text.replace('\\r\\n', '\\n')
+    text = text.replace('\\r', '\\n')
+    
+    # Remove excessive whitespace but preserve paragraph structure
+    text = re.sub(r'[ \\t]+', ' ', text)  # Multiple spaces/tabs to single space
+    text = re.sub(r'\\n{3,}', '\\n\\n', text)  # Multiple newlines to double newline
+    
+    # Remove page numbers and headers/footers (common patterns)
+    text = re.sub(r'\\n\\s*\\d+\\s*\\n', '\\n', text)  # Standalone numbers
+    text = re.sub(r'\\n\\s*Page \\d+.*\\n', '\\n', text)  # Page headers
+    
+    # Clean up start and end
+    text = text.strip()
+    
+    return text
+            '''
+        }
+        
+        return templates
+    
+    def apply_template_cleaning(self, text: str, template_name: str) -> str:
+        """Apply a predefined cleaning template"""
+        templates = self.get_text_cleaning_templates()
+        
+        if template_name not in templates:
+            raise ValueError(f"Template '{template_name}' not found")
+        
+        try:
+            # Execute the template
+            exec_globals = {
+                're': re,
+                'string': string,
+                'nltk': nltk,
+                'word_tokenize': word_tokenize,
+                'sent_tokenize': sent_tokenize,
+                'stopwords': stopwords,
+                'WordNetLemmatizer': WordNetLemmatizer,
+                'PorterStemmer': PorterStemmer
+            }
+            
+            exec(templates[template_name], exec_globals)
+            
+            # Get the function
+            clean_text_func = exec_globals['clean_text']
+            return clean_text_func(text)
             
         except Exception as e:
-            logging.error(f"Error exporting text: {e}")
-            return False, str(e)
+            raise ValueError(f"Failed to apply template '{template_name}': {str(e)}")
+    
+    def get_cleaning_suggestions(self, analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Get automated cleaning suggestions based on text analysis"""
+        suggestions = []
+        
+        content = analysis['content_analysis']
+        issues = analysis['quality_issues']
+        
+        # HTML cleaning
+        if content['contains_html']:
+            suggestions.append({
+                'type': 'html_removal',
+                'priority': 'high',
+                'description': 'Remove HTML tags from text',
+                'template': 'basic_cleaning',
+                'impact': 'Removes formatting artifacts and improves text quality'
+            })
+        
+        # URL cleaning
+        if content['contains_urls']:
+            suggestions.append({
+                'type': 'url_removal',
+                'priority': 'medium',
+                'description': 'Remove or extract URLs',
+                'template': 'basic_cleaning',
+                'impact': 'Reduces noise and focuses on actual content'
+            })
+        
+        # Encoding issues
+        if content['encoding_issues']:
+            suggestions.append({
+                'type': 'encoding_fix',
+                'priority': 'high',
+                'description': 'Fix text encoding issues',
+                'template': 'document_processing',
+                'impact': 'Improves text readability and processing accuracy'
+            })
+        
+        # Advanced NLP processing
+        if content['likely_language'] == 'english':
+            suggestions.append({
+                'type': 'nlp_processing',
+                'priority': 'medium',
+                'description': 'Apply NLP preprocessing (tokenization, lemmatization, stop word removal)',
+                'template': 'advanced_nlp_cleaning',
+                'impact': 'Prepares text for machine learning and analysis'
+            })
+        
+        # Whitespace normalization
+        if any(issue['type'] == 'excessive_whitespace' for issue in issues):
+            suggestions.append({
+                'type': 'whitespace_normalization',
+                'priority': 'low',
+                'description': 'Normalize whitespace and line breaks',
+                'template': 'document_processing',
+                'impact': 'Improves text consistency and readability'
+            })
+        
+        # Sort by priority
+        priority_order = {'high': 3, 'medium': 2, 'low': 1}
+        suggestions.sort(key=lambda x: priority_order[x['priority']], reverse=True)
+        
+        return suggestions
+    
+    def generate_text_report(self, original_text: str, cleaned_text: str, 
+                           execution_log: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a comprehensive text processing report"""
+        report = {
+            'summary': {
+                'success': execution_log['success'],
+                'original_length': execution_log['original_length'],
+                'final_length': execution_log['final_length'],
+                'length_reduction': execution_log.get('length_reduction', 0),
+                'reduction_percentage': 0
+            },
+            'text_changes': {},
+            'quality_improvements': {},
+            'execution_details': execution_log
+        }
+        
+        if execution_log['success']:
+            # Calculate reduction percentage
+            if execution_log['original_length'] > 0:
+                reduction_pct = (execution_log.get('length_reduction', 0) / execution_log['original_length']) * 100
+                report['summary']['reduction_percentage'] = reduction_pct
+            
+            # Analyze text changes
+            report['text_changes'] = self._analyze_text_changes(original_text, cleaned_text)
+            
+            # Quality improvements
+            original_analysis = self.analyze_text_data(original_text)
+            cleaned_analysis = self.analyze_text_data(cleaned_text)
+            report['quality_improvements'] = self._compare_text_quality(original_analysis, cleaned_analysis)
+        
+        return report
+    
+    def _analyze_text_changes(self, original: str, cleaned: str) -> Dict[str, Any]:
+        """Analyze changes between original and cleaned text"""
+        original_words = word_tokenize(original.lower())
+        cleaned_words = word_tokenize(cleaned.lower())
+        
+        return {
+            'character_change': len(cleaned) - len(original),
+            'word_change': len(cleaned_words) - len(original_words),
+            'sentence_change': len(sent_tokenize(cleaned)) - len(sent_tokenize(original)),
+            'vocabulary_change': len(set(cleaned_words)) - len(set(original_words)),
+            'removed_elements': {
+                'urls_removed': len(self.cleaning_patterns['urls'].findall(original)) - len(self.cleaning_patterns['urls'].findall(cleaned)),
+                'emails_removed': len(self.cleaning_patterns['emails'].findall(original)) - len(self.cleaning_patterns['emails'].findall(cleaned)),
+                'html_tags_removed': len(self.cleaning_patterns['html_tags'].findall(original)) - len(self.cleaning_patterns['html_tags'].findall(cleaned))
+            }
+        }
+    
+    def _compare_text_quality(self, original_analysis: Dict[str, Any], 
+                            cleaned_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare text quality before and after cleaning"""
+        return {
+            'vocabulary_richness': {
+                'original': original_analysis['basic_stats']['vocabulary_richness'],
+                'cleaned': cleaned_analysis['basic_stats']['vocabulary_richness'],
+                'improvement': cleaned_analysis['basic_stats']['vocabulary_richness'] - original_analysis['basic_stats']['vocabulary_richness']
+            },
+            'average_word_length': {
+                'original': original_analysis['basic_stats']['average_chars_per_word'],
+                'cleaned': cleaned_analysis['basic_stats']['average_chars_per_word'],
+                'improvement': cleaned_analysis['basic_stats']['average_chars_per_word'] - original_analysis['basic_stats']['average_chars_per_word']
+            },
+            'quality_issues_resolved': {
+                'original_issues': len(original_analysis['quality_issues']),
+                'remaining_issues': len(cleaned_analysis['quality_issues']),
+                'issues_resolved': len(original_analysis['quality_issues']) - len(cleaned_analysis['quality_issues'])
+            },
+            'content_improvements': {
+                'html_removed': original_analysis['content_analysis']['contains_html'] and not cleaned_analysis['content_analysis']['contains_html'],
+                'urls_removed': original_analysis['content_analysis']['contains_urls'] and not cleaned_analysis['content_analysis']['contains_urls'],
+                'encoding_fixed': original_analysis['content_analysis']['encoding_issues'] and not cleaned_analysis['content_analysis']['encoding_issues']
+            }
+        }
