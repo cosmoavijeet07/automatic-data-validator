@@ -1,7 +1,6 @@
 # Environment variables
 .env
 
-outputs/
 
 # Python
 __pycache__/
@@ -30,7 +29,6 @@ MANIFEST
 .streamlit/
 
 # Logs
-logs/
 downloads/
 *.log
 
