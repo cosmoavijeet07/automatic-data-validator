@@ -242,7 +242,7 @@ class Logger:
         self.log("Quality analysis completed", quality_details)
     
     def log_schema_change(self, column: str, old_type: str, new_type: str, 
-                         change_reason: str = None):
+                         change_reason = None):
         """Log schema changes"""
         schema_details = {
             "column": column,
