@@ -12,6 +12,8 @@ import numpy as np
 import pandas as pd
 
 class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle NumPy, Pandas, and other special types"""
+class NumpyJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle NumPy and Pandas types"""
     def default(self, obj):
         # Handle NumPy data types
@@ -24,8 +26,12 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, np.bool_):
             return bool(obj)
         
-        # Handle NumPy dtype objects (THIS IS THE KEY FIX)
+        # Handle NumPy dtype objects (from previous fix)
         elif isinstance(obj, np.dtype):
+            return str(obj)
+        
+        # Handle Pandas CategoricalDtype (NEW FIX)
+        elif hasattr(obj, '__class__') and 'CategoricalDtype' in str(type(obj)):
             return str(obj)
         
         # Handle Pandas data types
@@ -62,6 +68,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
         except:
             return super().default(obj)
 
+
 def safe_json_dumps(data: Any, **kwargs) -> str:
     """Safely dump data to JSON string handling various data types"""
     return json.dumps(data, cls=NumpyJSONEncoder, **kwargs)
@@ -88,11 +95,13 @@ def safe_dict_convert(data: Any) -> Any:
         return data.to_dict()
     elif isinstance(data, pd.Timestamp):
         return data.isoformat()
+    elif isinstance(data, pd.CategoricalDtype):  # Handle CategoricalDtype
+        return str(data)
     elif isinstance(data, (datetime.datetime, datetime.date)):
         return data.isoformat()
     elif isinstance(data, Path):
         return str(data)
-    elif isinstance(data, np.dtype):  # Add this line
+    elif isinstance(data, np.dtype):
         return str(data)
     elif hasattr(data, 'dtype'):
         return str(data)
@@ -102,7 +111,6 @@ def safe_dict_convert(data: Any) -> Any:
         return list(data)
     else:
         try:
-            # Try to convert to string as last resort
             return str(data)
         except:
             return None
