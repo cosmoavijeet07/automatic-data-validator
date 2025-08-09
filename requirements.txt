@@ -25,8 +25,8 @@ python-dateutil
 pathlib2
 
 # Data profiling (optional - install one of these)
-# ydata-profiling>=4.5.0
-pandas-profiling  # Alternative
+ydata-profiling>=4.5.0
+# pandas-profiling  # Alternative
 # sweetviz>=2.2.0  # Alternative
 
 # Development dependencies (optional)
