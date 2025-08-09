@@ -21,13 +21,12 @@ for dir_path in [DATA_DIR, TEMP_DIR, LOGS_DIR, OUTPUT_DIR]:
 
 # API Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-DEFAULT_MODEL = "gpt-4-turbo-preview"
+DEFAULT_MODEL = "gpt-4.1-2025-04-14"
 
 # Available models
 MODELS = {
-    "GPT-4 Turbo": "gpt-4-turbo-preview",
-    "GPT-4": "gpt-4",
-    "GPT-3.5 Turbo": "gpt-3.5-turbo",
+    "GPT 4.1": "gpt-4.1-2025-04-14",  # default
+    "GPT O4 Mini": "o4-mini-2025-04-16"
 }
 
 # Processing modes
@@ -74,20 +73,10 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 # Session configuration
 SESSION_TIMEOUT = 3600  # 1 hour in seconds
 
-# Profiling configuration
-PROFILE_CONFIG = {
-    "minimal": False,
-    "explorative": True,
-    "sensitive": False,
-    "dark_mode": False,
-    "orange_mode": False
-}
-
 # Text processing configuration
 TEXT_CHUNK_SIZE = 1000
 TEXT_OVERLAP = 200
 EMBEDDING_MODEL = "text-embedding-ada-002"
-VECTOR_DB_COLLECTION = "text_data"
 
 # Missing value patterns
 MISSING_PATTERNS = [

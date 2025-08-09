@@ -1,9 +1,9 @@
 """
-Text Processing Module for handling text data cleaning and vectorization
+Text Processing Module for handling text data cleaning (without ChromaDB)
 """
 import re
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 import pandas as pd
 import numpy as np
 import nltk
@@ -11,8 +11,6 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.stem import WordNetLemmatizer, PorterStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-import chromadb
-from chromadb.config import Settings
 
 # Download required NLTK data
 try:
@@ -34,16 +32,9 @@ class TextProcessor:
         self.lemmatizer = WordNetLemmatizer()
         self.stemmer = PorterStemmer()
         
-        # Initialize ChromaDB for vector storage
-        try:
-            self.chroma_client = chromadb.Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=f"./chroma_db/{session_id}"
-            ))
-            self.collection = None
-        except:
-            self.chroma_client = None
-            logging.warning("ChromaDB initialization failed")
+        # Store vectors in memory instead of ChromaDB
+        self.vector_store = {}
+        self.collection = None
     
     def load_text_data(self, text_data: Union[str, List[str], pd.Series]) -> Tuple[bool, str]:
         """Load text data from various sources"""
@@ -90,7 +81,13 @@ class TextProcessor:
             self.cleaned_text = []
             
             # Get stopwords
-            stop_words = set(stopwords.words('english'))
+            try:
+                stop_words = set(stopwords.words('english'))
+            except:
+                # If NLTK data not available, use basic stopwords
+                stop_words = set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+                                 'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'were'])
+            
             if custom_stopwords:
                 stop_words.update(custom_stopwords)
             
@@ -121,7 +118,11 @@ class TextProcessor:
                     text = ' '.join(text.split())
                 
                 # Tokenize
-                tokens = word_tokenize(text)
+                try:
+                    tokens = word_tokenize(text)
+                except:
+                    # Fallback to simple tokenization
+                    tokens = text.split()
                 
                 # Remove stopwords
                 if remove_stopwords:
@@ -129,11 +130,17 @@ class TextProcessor:
                 
                 # Lemmatization
                 if lemmatize and not stem:
-                    tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+                    try:
+                        tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+                    except:
+                        pass  # Skip if lemmatization fails
                 
                 # Stemming
                 if stem and not lemmatize:
-                    tokens = [self.stemmer.stem(t) for t in tokens]
+                    try:
+                        tokens = [self.stemmer.stem(t) for t in tokens]
+                    except:
+                        pass  # Skip if stemming fails
                 
                 # Join tokens back
                 cleaned = ' '.join(tokens)
@@ -169,6 +176,13 @@ class TextProcessor:
                 return False, f"Unknown method: {method}"
             
             self.vectors = self.vectorizer.fit_transform(text_to_use)
+            
+            # Store vectors in memory
+            for i, text in enumerate(text_to_use):
+                self.vector_store[f"doc_{i}"] = {
+                    'text': text,
+                    'vector': self.vectors[i].toarray()[0]
+                }
             
             return True, f"Extracted {self.vectors.shape[1]} features from {self.vectors.shape[0]} documents"
             
@@ -227,38 +241,28 @@ class TextProcessor:
         self,
         collection_name: str = "text_collection"
     ) -> Tuple[bool, str]:
-        """Create vector database for text data"""
+        """Create in-memory vector database for text data"""
         try:
-            if self.chroma_client is None:
-                return False, "ChromaDB not initialized"
+            # Store collection name
+            self.collection = f"{collection_name}_{self.session_id}"
             
-            # Create or get collection
-            self.collection = self.chroma_client.create_collection(
-                name=f"{collection_name}_{self.session_id}",
-                metadata={"session_id": self.session_id}
-            )
-            
-            # Add documents
+            # Add documents to memory store
             text_to_use = self.cleaned_text if self.cleaned_text else self.text_data
             
-            # Create embeddings (simplified - in production use proper embedding model)
-            if self.vectors is not None:
-                embeddings = self.vectors.toarray().tolist()
-            else:
+            # Create embeddings if not already done
+            if self.vectors is None:
                 # Create simple embeddings
                 vectorizer = TfidfVectorizer(max_features=100)
                 vectors = vectorizer.fit_transform(text_to_use)
-                embeddings = vectors.toarray().tolist()
+                
+                for i, text in enumerate(text_to_use):
+                    self.vector_store[f"doc_{i}"] = {
+                        'text': text,
+                        'vector': vectors[i].toarray()[0],
+                        'metadata': {'index': i}
+                    }
             
-            # Add to collection
-            self.collection.add(
-                documents=text_to_use,
-                embeddings=embeddings,
-                ids=[f"doc_{i}" for i in range(len(text_to_use))],
-                metadatas=[{"index": i} for i in range(len(text_to_use))]
-            )
-            
-            return True, f"Created vector database with {len(text_to_use)} documents"
+            return True, f"Created in-memory vector store with {len(text_to_use)} documents"
             
         except Exception as e:
             logging.error(f"Error creating vector database: {e}")
@@ -269,27 +273,36 @@ class TextProcessor:
         query: str,
         n_results: int = 5
     ) -> List[Dict[str, Any]]:
-        """Search for similar documents"""
+        """Search for similar documents using cosine similarity"""
         try:
-            if self.collection is None:
+            if not self.vector_store or self.vectorizer is None:
                 return []
             
             # Clean query same way as documents
             cleaned_query = self.clean_single_text(query)
             
             # Create query embedding
-            if self.vectorizer:
-                query_vector = self.vectorizer.transform([cleaned_query]).toarray()[0].tolist()
-            else:
-                return []
+            query_vector = self.vectorizer.transform([cleaned_query]).toarray()[0]
             
-            # Search
-            results = self.collection.query(
-                query_embeddings=[query_vector],
-                n_results=n_results
-            )
+            # Calculate cosine similarities
+            similarities = []
+            for doc_id, doc_data in self.vector_store.items():
+                doc_vector = doc_data['vector']
+                
+                # Cosine similarity
+                similarity = np.dot(query_vector, doc_vector) / (
+                    np.linalg.norm(query_vector) * np.linalg.norm(doc_vector) + 1e-10
+                )
+                
+                similarities.append({
+                    'id': doc_id,
+                    'text': doc_data['text'],
+                    'similarity': similarity
+                })
             
-            return results
+            # Sort by similarity and return top n
+            similarities.sort(key=lambda x: x['similarity'], reverse=True)
+            return similarities[:n_results]
             
         except Exception as e:
             logging.error(f"Error searching: {e}")
@@ -305,10 +318,16 @@ class TextProcessor:
         text = re.sub(r'[^\w\s]', ' ', text)
         text = ' '.join(text.split())
         
-        tokens = word_tokenize(text)
-        stop_words = set(stopwords.words('english'))
-        tokens = [t for t in tokens if t not in stop_words]
-        tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+        try:
+            tokens = word_tokenize(text)
+            stop_words = set(stopwords.words('english'))
+            tokens = [t for t in tokens if t not in stop_words]
+            tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+        except:
+            # Fallback to simple processing
+            tokens = text.split()
+            basic_stops = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for'}
+            tokens = [t for t in tokens if t not in basic_stops]
         
         return ' '.join(tokens)
     

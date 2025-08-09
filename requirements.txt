@@ -7,15 +7,9 @@ duckdb
 openai
 python-dotenv
 plotly
-sqlite3
 scikit-learn
 nltk
-langchain
-chromadb
-tiktoken
-dask
 pyarrow
 jsonschema
 matplotlib
 seaborn
-
