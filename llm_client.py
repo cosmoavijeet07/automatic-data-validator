@@ -16,13 +16,21 @@ class LLMClient:
         self.model_id = MODELS.get(model_name, MODELS["GPT 4.1"])
         self.max_retries = MAX_RETRIES
         self.retry_delay = RETRY_DELAY
+        self.client = None
         
         # Initialize OpenAI client
-        try:
-            import openai
-            self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        except Exception as e:
-            st.error(f"Failed to initialize LLM client: {str(e)}")
+        if OPENAI_API_KEY:
+            try:
+                import openai
+                self.client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            except ImportError:
+                st.error("OpenAI library not installed. Please run: pip install openai")
+                self.client = None
+            except Exception as e:
+                st.error(f"Failed to initialize LLM client: {str(e)}")
+                self.client = None
+        else:
+            st.warning("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
             self.client = None
     
     def get_completion(self, prompt: str, system_prompt: str = None, 
@@ -40,7 +48,7 @@ class LLMClient:
             LLM response as string
         """
         if not self.client:
-            raise Exception("OpenAI client not initialized. Please check your API key.")
+            return "LLM client not available. Please check your API key."
         
         messages = []
         
@@ -70,15 +78,17 @@ class LLMClient:
                         time.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
                         continue
                     else:
-                        raise Exception("Rate limit exceeded. Please try again later.")
+                        return f"Rate limit exceeded. Please try again later. Error: {error_str}"
                 
                 # Handle API errors
                 elif "api" in error_str.lower() or "400" in error_str or "401" in error_str:
+                    if "api_key" in error_str.lower() or "401" in error_str:
+                        return "Invalid API key. Please check your OPENAI_API_KEY environment variable."
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay)
                         continue
                     else:
-                        raise Exception(f"API error: {str(e)}")
+                        return f"API error: {error_str}"
                 
                 # Handle other errors
                 else:
@@ -86,9 +96,9 @@ class LLMClient:
                         time.sleep(self.retry_delay)
                         continue
                     else:
-                        raise Exception(f"Unexpected error: {str(e)}")
+                        return f"Unexpected error: {error_str}"
         
-        raise Exception("Failed to get completion after maximum retries")
+        return "Failed to get completion after maximum retries"
     
     def get_json_completion(self, prompt: str, system_prompt: str = None) -> Dict[str, Any]:
         """
@@ -106,9 +116,17 @@ class LLMClient:
         {prompt}
         
         Please respond with valid JSON only. Do not include any text outside the JSON structure.
+        Do not include markdown code blocks or backticks.
         """
         
         response = self.get_completion(json_prompt, system_prompt)
+        
+        # Check for error messages
+        if "LLM client not available" in response or "error" in response.lower():
+            return {
+                "error": response,
+                "raw_response": response
+            }
         
         try:
             # Try to parse as JSON
@@ -116,6 +134,12 @@ class LLMClient:
         except json.JSONDecodeError:
             # Try to extract JSON from response
             import re
+            
+            # Remove markdown code blocks if present
+            response = re.sub(r'```json\s*', '', response)
+            response = re.sub(r'```\s*', '', response)
+            
+            # Try to find JSON object
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 try:
@@ -140,10 +164,14 @@ class LLMClient:
         Returns:
             Generated code
         """
+        if not self.client:
+            return "# LLM client not available. Please check your API key."
+        
         system_prompt = f"""
         You are an expert {language} programmer. Generate clean, efficient, and well-commented code.
         Follow best practices and include error handling where appropriate.
-        Only return the code without any explanations or markdown formatting.
+        Return only the code without any markdown formatting or code blocks.
+        Do not include backticks or language identifiers.
         """
         
         code_prompt = f"""
@@ -156,9 +184,17 @@ class LLMClient:
         - Include proper error handling
         - Add comments for complex operations
         - Ensure code is production-ready
+        - Return only the raw code, no markdown or explanations
         """
         
-        return self.get_completion(code_prompt, system_prompt, temperature=0.1)
+        response = self.get_completion(code_prompt, system_prompt, temperature=0.1)
+        
+        # Clean up response if it contains markdown
+        import re
+        response = re.sub(r'```python\s*', '', response)
+        response = re.sub(r'```\s*', '', response)
+        
+        return response
     
     def summarize_strategy(self, code: str, context: str = "") -> str:
         """
@@ -171,15 +207,16 @@ class LLMClient:
         Returns:
             Strategy summary (max 100 words)
         """
+        if not self.client:
+            return "LLM client not available for summary generation."
+        
         prompt = f"""
         Analyze the following code and provide a concise summary of the data cleaning strategy:
         
         Context: {context}
         
         Code:
-        ```python
-        {code}
-        ```
+        {code[:2000]}  # Limit code length to avoid token limits
         
         Provide a summary in less than 100 words focusing on:
         1. Main cleaning operations performed
@@ -201,12 +238,18 @@ class LLMClient:
         Returns:
             Validation results
         """
+        if not self.client:
+            return {
+                "is_valid": False,
+                "issues": ["LLM client not available"],
+                "suggestions": [],
+                "risk_level": "unknown"
+            }
+        
         prompt = f"""
         Analyze the following Python code for potential issues:
         
-        ```python
-        {code}
-        ```
+        {code[:3000]}  # Limit for token management
         
         Check for:
         1. Syntax errors
@@ -247,7 +290,7 @@ class LLMClient:
             enhanced_prompt += f"\n\nData Shape: {context['shape']}"
         
         if 'quality_issues' in context:
-            enhanced_prompt += f"\n\nQuality Issues:\n{json.dumps(context['quality_issues'], indent=2)}"
+            enhanced_prompt += f"\n\nQuality Issues:\n{json.dumps(context['quality_issues'], indent=2, default=str)}"
         
         if 'user_instructions' in context:
             enhanced_prompt += f"\n\nUser Instructions: {context['user_instructions']}"
@@ -263,7 +306,8 @@ class LLMClient:
             "name": self.model_name,
             "id": self.model_id,
             "max_retries": self.max_retries,
-            "retry_delay": self.retry_delay
+            "retry_delay": self.retry_delay,
+            "client_available": self.client is not None
         }
     
     def switch_model(self, model_name: str):
@@ -315,3 +359,14 @@ class LLMClient:
             chunks.append(current_chunk)
         
         return chunks
+    
+    def test_connection(self) -> bool:
+        """Test if the LLM connection is working"""
+        if not self.client:
+            return False
+        
+        try:
+            response = self.get_completion("Say 'Hello'", temperature=0)
+            return "Hello" in response or "hello" in response.lower()
+        except:
+            return False

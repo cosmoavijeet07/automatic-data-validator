@@ -43,6 +43,16 @@ def initialize_session():
     
     if 'current_step' not in st.session_state:
         st.session_state.current_step = 'upload'
+    
+    # Add flags for button actions
+    if 'proceed_to_analysis' not in st.session_state:
+        st.session_state.proceed_to_analysis = False
+    
+    if 'proceed_to_correction' not in st.session_state:
+        st.session_state.proceed_to_correction = False
+    
+    if 'proceed_to_finalization' not in st.session_state:
+        st.session_state.proceed_to_finalization = False
 
 def main():
     st.set_page_config(
@@ -102,6 +112,23 @@ def main():
     tab1, tab2, tab3 = st.tabs(["Data Processing", "Logs", "Downloads"])
     
     with tab1:
+        # Check for state transitions first
+        if st.session_state.proceed_to_analysis:
+            st.session_state.current_step = 'analysis'
+            st.session_state.proceed_to_analysis = False
+            st.rerun()
+        
+        if st.session_state.proceed_to_correction:
+            st.session_state.current_step = 'correction'
+            st.session_state.proceed_to_correction = False
+            st.rerun()
+        
+        if st.session_state.proceed_to_finalization:
+            st.session_state.current_step = 'finalization'
+            st.session_state.proceed_to_finalization = False
+            st.rerun()
+        
+        # Handle current step
         if st.session_state.current_step == 'upload':
             handle_file_upload(logger, llm_client)
         elif st.session_state.current_step == 'schema':
@@ -189,134 +216,196 @@ def handle_schema_management(logger, llm_client):
     # Schema editing interface
     st.subheader("Schema Editing")
     
+    # Manual Schema Editing in one column
+    with st.expander("📝 Manual Schema Editing", expanded=False):
+        edited_schema = {}
+        for col_name, col_info in st.session_state.schema.items():
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text(f"Column: {col_name}")
+            with col2:
+                new_dtype = st.selectbox(
+                    f"Data Type",
+                    ['object', 'int64', 'float64', 'datetime64[ns]', 'bool', 'category'],
+                    index=['object', 'int64', 'float64', 'datetime64[ns]', 'bool', 'category'].index(
+                        col_info.get('suggested_dtype', col_info['dtype'])
+                    ) if col_info.get('suggested_dtype', col_info['dtype']) in ['object', 'int64', 'float64', 'datetime64[ns]', 'bool', 'category'] else 0,
+                    key=f"dtype_{col_name}"
+                )
+                edited_schema[col_name] = {
+                    'dtype': new_dtype,
+                    'null_count': col_info['null_count'],
+                    'unique_count': col_info['unique_count']
+                }
+        
+        if st.button("Apply Manual Changes", key="apply_manual_schema"):
+            st.session_state.schema = edited_schema
+            st.success("Manual schema changes saved!")
+            st.rerun()
+    
+    # Natural Language Schema Editing
+    st.subheader("🤖 Natural Language Schema Editing")
+    
+    nl_instruction = st.text_area(
+        "Describe schema changes in natural language",
+        placeholder="e.g., 'Convert date column to datetime, make age column integer, treat category as categorical'",
+        key="nl_schema_input",
+        height=100
+    )
+    
+    if st.button("Process NL Changes", key="nl_schema_button", type="primary"):
+        if nl_instruction:
+            with st.spinner("Processing natural language instruction..."):
+                try:
+                    # Generate the schema change code
+                    prompt = f"""
+                    Current schema: {json.dumps(st.session_state.schema, indent=2, default=str)}
+                    
+                    User instruction: {nl_instruction}
+                    
+                    Generate Python code to apply these schema changes to a DataFrame called 'df'.
+                    Include comments explaining each change.
+                    Return only the code, no explanations.
+                    """
+                    
+                    generated_code = llm_client.generate_code(prompt)
+                    
+                    # Generate strategy summary
+                    strategy = llm_client.summarize_strategy(generated_code, f"Schema changes for {len(st.session_state.schema)} columns")
+                    
+                    # Store in session state for review
+                    st.session_state.nl_schema_code = generated_code
+                    st.session_state.nl_schema_strategy = strategy
+                    st.session_state.nl_instruction = nl_instruction
+                    
+                    # Process the schema update
+                    updated_schema = schema_manager.process_nl_schema_change(
+                        st.session_state.schema, 
+                        nl_instruction
+                    )
+                    st.session_state.proposed_schema = updated_schema
+                    
+                except Exception as e:
+                    st.error(f"Error processing NL instruction: {str(e)}")
+                    logger.log("NL schema processing error", {"error": str(e)})
+        else:
+            st.warning("Please enter an instruction first.")
+    
+    # Show NL processing results if available
+    if hasattr(st.session_state, 'nl_schema_code') and st.session_state.nl_schema_code:
+        st.subheader("📋 Generated Schema Change Strategy")
+        
+        # Show strategy summary
+        st.info(f"**Strategy Summary**: {st.session_state.nl_schema_strategy}")
+        
+        # Show generated code
+        with st.expander("View Generated Code", expanded=True):
+            st.code(st.session_state.nl_schema_code, language='python')
+        
+        # Show proposed changes
+        if hasattr(st.session_state, 'proposed_schema'):
+            st.subheader("⚡ Proposed Schema Changes")
+            
+            changes_found = False
+            change_details = []
+            
+            for col_name in st.session_state.schema.keys():
+                if col_name in st.session_state.proposed_schema:
+                    old_type = st.session_state.schema[col_name].get('dtype', 'unknown')
+                    new_type = st.session_state.proposed_schema[col_name].get('dtype', 'unknown')
+                    
+                    if old_type != new_type:
+                        changes_found = True
+                        change_details.append(f"**{col_name}**: `{old_type}` → `{new_type}`")
+            
+            if changes_found:
+                for change in change_details:
+                    st.write(f"📝 {change}")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("✅ Approve & Apply", key="approve_nl_changes", type="primary"):
+                        st.session_state.schema = st.session_state.proposed_schema
+                        
+                        # Apply the changes
+                        with st.spinner("Applying schema changes..."):
+                            try:
+                                st.session_state.data = schema_manager.apply_schema_changes(
+                                    st.session_state.data, 
+                                    st.session_state.schema
+                                )
+                                st.success("Schema changes applied successfully!")
+                                logger.log("NL schema changes applied", {
+                                    "instruction": st.session_state.nl_instruction,
+                                    "changes": st.session_state.proposed_schema
+                                })
+                                
+                                # Clear the NL state
+                                if 'nl_schema_code' in st.session_state:
+                                    del st.session_state.nl_schema_code
+                                if 'nl_schema_strategy' in st.session_state:
+                                    del st.session_state.nl_schema_strategy
+                                if 'proposed_schema' in st.session_state:
+                                    del st.session_state.proposed_schema
+                                
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Error applying schema changes: {str(e)}")
+                
+                with col2:
+                    if st.button("✏️ Modify Instruction", key="modify_nl"):
+                        # Clear the state to allow new instruction
+                        if 'nl_schema_code' in st.session_state:
+                            del st.session_state.nl_schema_code
+                        if 'nl_schema_strategy' in st.session_state:
+                            del st.session_state.nl_schema_strategy
+                        if 'proposed_schema' in st.session_state:
+                            del st.session_state.proposed_schema
+                        st.rerun()
+                
+                with col3:
+                    if st.button("❌ Reject Changes", key="reject_nl_changes"):
+                        # Clear all NL-related state
+                        if 'nl_schema_code' in st.session_state:
+                            del st.session_state.nl_schema_code
+                        if 'nl_schema_strategy' in st.session_state:
+                            del st.session_state.nl_schema_strategy
+                        if 'proposed_schema' in st.session_state:
+                            del st.session_state.proposed_schema
+                        if 'nl_instruction' in st.session_state:
+                            del st.session_state.nl_instruction
+                        st.info("Changes rejected. Schema unchanged.")
+                        st.rerun()
+            else:
+                st.info("No schema changes detected from your instruction.")
+    
+    # Final Apply Schema button (for any pending changes)
+    st.markdown("---")
+    st.subheader("Apply Schema & Continue")
+    
     col1, col2 = st.columns(2)
     
     with col1:
-        st.text("Manual Schema Editing")
-        
-        # Create editable schema table
-        edited_schema = {}
-        for col_name, col_info in st.session_state.schema.items():
-            st.text(f"Column: {col_name}")
-            
-            new_dtype = st.selectbox(
-                f"Data Type for {col_name}",
-                ['object', 'int64', 'float64', 'datetime64[ns]', 'bool', 'category'],
-                index=0 if col_info['dtype'] == 'object' else 
-                      1 if 'int' in col_info['dtype'] else
-                      2 if 'float' in col_info['dtype'] else 0,
-                key=f"dtype_{col_name}"
-            )
-            
-            edited_schema[col_name] = {
-                'dtype': new_dtype,
-                'null_count': col_info['null_count'],
-                'unique_count': col_info['unique_count']
-            }
+        if st.button("🔧 Apply Current Schema", type="primary", key="apply_final_schema"):
+            with st.spinner("Applying schema..."):
+                try:
+                    st.session_state.data = schema_manager.apply_schema_changes(
+                        st.session_state.data, 
+                        st.session_state.schema
+                    )
+                    logger.log("Schema applied", st.session_state.schema)
+                    st.success("Schema applied successfully!")
+                    
+                except Exception as e:
+                    st.error(f"Error applying schema: {str(e)}")
+                    logger.log("Schema application error", {"error": str(e)})
     
     with col2:
-        st.text("Natural Language Schema Editing")
-        
-        nl_instruction = st.text_area(
-            "Describe schema changes in natural language",
-            placeholder="e.g., 'Convert date column to datetime, make age column integer, treat category as categorical'",
-            key="nl_schema_input"
-        )
-        
-        if st.button("Process NL Changes", key="nl_schema_button"):
-            if nl_instruction:
-                with st.spinner("Processing natural language instruction..."):
-                    try:
-                        updated_schema = schema_manager.process_nl_schema_change(
-                            st.session_state.schema, 
-                            nl_instruction
-                        )
-                        
-                        # Show the proposed changes for user review
-                        st.subheader("⚡ Proposed Schema Changes")
-                        
-                        # Display changes
-                        changes_found = False
-                        for col_name in st.session_state.schema.keys():
-                            if col_name in updated_schema:
-                                old_type = st.session_state.schema[col_name].get('dtype', 'unknown')
-                                new_type = updated_schema[col_name].get('dtype', 'unknown')
-                                
-                                if old_type != new_type:
-                                    changes_found = True
-                                    st.write(f"📝 **{col_name}**: {old_type} → {new_type}")
-                        
-                        if not changes_found:
-                            st.info("No schema changes detected from your instruction.")
-                        else:
-                            # Store proposed changes for approval
-                            st.session_state.proposed_schema = updated_schema
-                            st.session_state.nl_instruction_used = nl_instruction
-                            
-                            col_approve, col_reject = st.columns(2)
-                            
-                            with col_approve:
-                                if st.button("✅ Approve Changes", key="approve_nl_changes"):
-                                    st.session_state.schema = updated_schema
-                                    st.success("Schema changes applied successfully!")
-                                    logger.log("NL schema changes applied", {
-                                        "instruction": nl_instruction,
-                                        "changes": updated_schema
-                                    })
-                                    st.rerun()
-                            
-                            with col_reject:
-                                if st.button("❌ Reject Changes", key="reject_nl_changes"):
-                                    if 'proposed_schema' in st.session_state:
-                                        del st.session_state.proposed_schema
-                                    if 'nl_instruction_used' in st.session_state:
-                                        del st.session_state.nl_instruction_used
-                                    st.info("Changes rejected. Schema unchanged.")
-                                    st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Error processing NL instruction: {str(e)}")
-                        logger.log("NL schema processing error", {"error": str(e)})
-            else:
-                st.warning("Please enter an instruction first.")
-    
-    # Apply schema changes section
-    st.subheader("Apply Schema Changes")
-    
-    # Show manual changes if any
-    if edited_schema != st.session_state.schema:
-        st.write("📝 Manual changes detected:")
-        for col_name in edited_schema.keys():
-            old_type = st.session_state.schema[col_name].get('dtype', 'unknown')
-            new_type = edited_schema[col_name].get('dtype', 'unknown')
-            if old_type != new_type:
-                st.write(f"• **{col_name}**: {old_type} → {new_type}")
-    
-    # Apply changes button
-    if st.button("Apply Schema Changes", type="primary", key="apply_schema_button"):
-        with st.spinner("Applying schema changes..."):
-            try:
-                # Use edited schema if changes were made manually
-                final_schema = edited_schema if edited_schema != st.session_state.schema else st.session_state.schema
-                
-                st.session_state.data = schema_manager.apply_schema_changes(
-                    st.session_state.data, 
-                    final_schema
-                )
-                st.session_state.schema = final_schema
-                
-                logger.log("Schema changes applied", final_schema)
-                st.success("Schema changes applied successfully!")
-                
-                # Show proceed button
-                st.write("---")
-                if st.button("🔍 Proceed to Data Analysis", type="primary", key="proceed_to_analysis"):
-                    st.session_state.current_step = 'analysis'
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Error applying schema changes: {str(e)}")
-                logger.log("Schema application error", {"error": str(e)})
+        if st.button("🔍 Proceed to Data Analysis", type="primary", key="schema_to_analysis_btn"):
+            st.session_state.proceed_to_analysis = True
+            st.rerun()
 
 def handle_data_analysis(logger, llm_client):
     """Handle data quality analysis"""
@@ -386,8 +475,8 @@ def handle_data_analysis(logger, llm_client):
     st.session_state.quality_report = quality_report
     st.session_state.enhanced_analysis = enhanced_analysis
     
-    if st.button("Proceed to Data Correction", type="primary"):
-        st.session_state.current_step = 'correction'
+    if st.button("🔧 Proceed to Data Correction", type="primary", key="analysis_to_correction_btn"):
+        st.session_state.proceed_to_correction = True
         st.rerun()
 
 def handle_data_correction(logger, llm_client):
@@ -493,7 +582,6 @@ def handle_data_correction(logger, llm_client):
     else:
         st.info("👆 Click 'Generate Correction Code' to create a data cleaning strategy.")
 
-
 def execute_correction(data_corrector, logger):
     """Execute the correction code"""
     with st.spinner("Executing correction..."):
@@ -525,15 +613,15 @@ def execute_correction(data_corrector, logger):
                 
                 # Show execution output
                 if execution_log.get('output'):
-                    st.subheader("📋 Execution Log")
-                    for line in execution_log['output']:
-                        if line.strip():
-                            st.text(line)
+                    with st.expander("📋 Execution Log"):
+                        for line in execution_log['output']:
+                            if line.strip():
+                                st.text(line)
                 
                 # Proceed button
-                st.write("---")
-                if st.button("🎯 Proceed to Finalization", type="primary", key="proceed_to_finalization"):
-                    st.session_state.current_step = 'finalization'
+                st.markdown("---")
+                if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
+                    st.session_state.proceed_to_finalization = True
                     st.rerun()
             else:
                 st.error("❌ Data correction failed!")
@@ -564,7 +652,7 @@ def handle_finalization(logger, llm_client):
     
     pipeline_generator = PipelineGenerator(llm_client)
     
-    if st.button("Generate Final Pipeline"):
+    if st.button("Generate Final Pipeline", type="primary"):
         with st.spinner("Generating pipeline..."):
             try:
                 pipeline_code = pipeline_generator.generate_pipeline(

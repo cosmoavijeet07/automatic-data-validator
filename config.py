@@ -21,14 +21,17 @@ OUTPUTS_DIR = Path("outputs")
 for directory in [UPLOAD_DIR, TEMP_DIR, LOGS_DIR, OUTPUTS_DIR]:
     directory.mkdir(exist_ok=True)
 
-# LLM Model configurations
+# LLM Model configurations - FIXED: Using correct OpenAI model names
 MODELS = {
-    "GPT 4.1": "gpt-4o",  # Use available GPT-4 model
-    "GPT O4 Mini": "gpt-4o-mini"  # Use available GPT-4 mini model
+    "GPT 4.1": "gpt-4o",  # Using GPT-4 Omni model
+    "GPT O4 Mini": "gpt-4o-mini"  # Using GPT-4 Omni Mini model
 }
 
-# OpenAI API settings (you'll need to set these environment variables)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key-here")
+# OpenAI API settings
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+if not OPENAI_API_KEY:
+    print("WARNING: OPENAI_API_KEY not set. Please set it as an environment variable.")
+    
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 # Data processing settings
