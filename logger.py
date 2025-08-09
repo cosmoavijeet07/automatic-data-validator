@@ -24,6 +24,10 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, np.bool_):
             return bool(obj)
         
+        # Handle NumPy dtype objects (THIS IS THE KEY FIX)
+        elif isinstance(obj, np.dtype):
+            return str(obj)
+        
         # Handle Pandas data types
         elif isinstance(obj, pd.DataFrame):
             return obj.to_dict('records')
@@ -40,7 +44,7 @@ class NumpyJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, Path):
             return str(obj)
         
-        # Handle dtype objects
+        # Handle dtype objects (catch-all for other dtype-like objects)
         elif hasattr(obj, 'dtype'):
             return str(obj)
         
@@ -87,6 +91,8 @@ def safe_dict_convert(data: Any) -> Any:
     elif isinstance(data, (datetime.datetime, datetime.date)):
         return data.isoformat()
     elif isinstance(data, Path):
+        return str(data)
+    elif isinstance(data, np.dtype):  # Add this line
         return str(data)
     elif hasattr(data, 'dtype'):
         return str(data)
