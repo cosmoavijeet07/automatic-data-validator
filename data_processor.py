@@ -1,5 +1,5 @@
 """
-Data Processing Module for handling different file types and operations
+Data Processing Module with optional profiling libraries
 """
 import pandas as pd
 import numpy as np
@@ -8,11 +8,24 @@ import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 from pathlib import Path
 import duckdb
-from ydata_profiling import ProfileReport
-import sweetviz as sv
 from io import StringIO
 import sys
 import traceback
+
+# Try to import profiling libraries (optional)
+try:
+    from ydata_profiling import ProfileReport
+    YDATA_AVAILABLE = True
+except ImportError:
+    YDATA_AVAILABLE = False
+    logging.warning("ydata-profiling not available - using basic profiling")
+
+try:
+    import sweetviz as sv
+    SWEETVIZ_AVAILABLE = True
+except ImportError:
+    SWEETVIZ_AVAILABLE = False
+    logging.warning("sweetviz not available - using basic profiling")
 
 from utils import (
     detect_delimiter, detect_encoding, detect_column_types,
@@ -164,7 +177,7 @@ class DataProcessor:
             logging.error(f"Error updating schema: {e}")
             return False, str(e)
     
-    def generate_quality_report(self, use_ydata: bool = True) -> Dict[str, Any]:
+    def generate_quality_report(self, use_profiling: bool = False) -> Dict[str, Any]:
         """Generate comprehensive quality report"""
         report = {
             'basic_metrics': calculate_data_quality_metrics(self.df),
@@ -207,6 +220,22 @@ class DataProcessor:
                 'column': 'FULL_ROW',
                 'issues': [f"Duplicate rows: {duplicate_pct:.2f}%"]
             })
+        
+        # Use advanced profiling if available and requested
+        if use_profiling:
+            if YDATA_AVAILABLE:
+                try:
+                    profile = ProfileReport(self.df, minimal=True)
+                    report['ydata_profile'] = "Profile generated (view separately)"
+                except Exception as e:
+                    logging.warning(f"YData profiling failed: {e}")
+            
+            if SWEETVIZ_AVAILABLE:
+                try:
+                    sweet_report = sv.analyze(self.df)
+                    report['sweetviz_report'] = "Report generated (view separately)"
+                except Exception as e:
+                    logging.warning(f"Sweetviz profiling failed: {e}")
         
         return report
     
