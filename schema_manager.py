@@ -146,6 +146,10 @@ class SchemaManager:
                                 nl_instruction: str) -> Dict[str, Any]:
         """Process natural language instruction to modify schema"""
         try:
+            # Check if LLM client is available
+            if not self.llm_client or not self.llm_client.client:
+                raise ValueError("LLM client not available. Please check your OpenAI API key.")
+            
             # Prepare prompt for LLM
             prompt = f"""
             Current schema:
