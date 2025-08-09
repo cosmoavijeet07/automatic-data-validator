@@ -12,8 +12,6 @@ import numpy as np
 import pandas as pd
 
 class NumpyJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle NumPy, Pandas, and other special types"""
-class NumpyJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle NumPy and Pandas types"""
     def default(self, obj):
         # Handle NumPy data types
