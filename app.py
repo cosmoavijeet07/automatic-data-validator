@@ -5,6 +5,10 @@ import uuid
 from datetime import datetime
 import traceback
 import os
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Import custom modules
 from config import MODELS, SUPPORTED_FILE_TYPES
@@ -53,6 +57,41 @@ def initialize_session():
     
     if 'proceed_to_finalization' not in st.session_state:
         st.session_state.proceed_to_finalization = False
+    
+    # Initialize logger and session manager ONCE
+    if 'logger' not in st.session_state:
+        st.session_state.logger = Logger(st.session_state.session_id)
+    
+    if 'session_manager' not in st.session_state:
+        st.session_state.session_manager = SessionManager(st.session_state.session_id)
+    
+    if 'llm_client' not in st.session_state:
+        st.session_state.llm_client = LLMClient(st.session_state.selected_model)
+
+def reset_session_for_new_file():
+    """Reset session when a new file is uploaded"""
+    # Generate new session ID
+    new_session_id = str(uuid.uuid4())
+    
+    # Keep the processing mode and model selection
+    processing_mode = st.session_state.processing_mode
+    selected_model = st.session_state.selected_model
+    
+    # Clear all session state
+    for key in list(st.session_state.keys()):
+        if key not in ['processing_mode', 'selected_model']:
+            del st.session_state[key]
+    
+    # Set new session ID and reinitialize
+    st.session_state.session_id = new_session_id
+    st.session_state.processing_mode = processing_mode
+    st.session_state.selected_model = selected_model
+    st.session_state.current_step = 'upload'
+    
+    # Create new logger and session manager for the new session
+    st.session_state.logger = Logger(new_session_id)
+    st.session_state.session_manager = SessionManager(new_session_id)
+    st.session_state.llm_client = LLMClient(selected_model)
 
 def main():
     st.set_page_config(
@@ -63,10 +102,10 @@ def main():
     
     initialize_session()
     
-    # Initialize components
-    session_manager = SessionManager(st.session_state.session_id)
-    logger = Logger(st.session_state.session_id)
-    llm_client = LLMClient(st.session_state.selected_model)
+    # Use persistent components from session state
+    logger = st.session_state.logger
+    session_manager = st.session_state.session_manager
+    llm_client = st.session_state.llm_client
     
     st.title("🧹 AI-Powered Data Cleaning Platform")
     
@@ -75,11 +114,15 @@ def main():
         st.header("Configuration")
         
         # Model selection
-        st.session_state.selected_model = st.selectbox(
+        new_model = st.selectbox(
             "Select LLM Model",
             options=list(MODELS.keys()),
-            index=0
+            index=list(MODELS.keys()).index(st.session_state.selected_model)
         )
+        
+        if new_model != st.session_state.selected_model:
+            st.session_state.selected_model = new_model
+            st.session_state.llm_client.switch_model(new_model)
         
         # Processing mode
         st.session_state.processing_mode = st.radio(
@@ -100,6 +143,8 @@ def main():
         current_step_idx = steps.index(st.session_state.current_step.title()) if st.session_state.current_step.title() in steps else 0
         
         st.subheader("Progress")
+        progress = st.progress(current_step_idx / (len(steps) - 1))
+        
         for i, step in enumerate(steps):
             if i < current_step_idx:
                 st.success(f"✅ {step}")
@@ -107,6 +152,12 @@ def main():
                 st.info(f"🔄 {step}")
             else:
                 st.text(f"⏳ {step}")
+        
+        # Session actions
+        st.subheader("Session Actions")
+        if st.button("🔄 Reset Session", help="Start over with a new file"):
+            reset_session_for_new_file()
+            st.rerun()
 
     # Main content area
     tab1, tab2, tab3 = st.tabs(["Data Processing", "Logs", "Downloads"])
@@ -153,10 +204,18 @@ def handle_file_upload(logger, llm_client):
     uploaded_file = st.file_uploader(
         "Choose a file",
         type=SUPPORTED_FILE_TYPES,
-        help="Supported formats: CSV, Excel (multi-sheet), JSON, TXT"
+        help="Supported formats: CSV, Excel (multi-sheet), JSON, TXT",
+        key="file_uploader"
     )
     
     if uploaded_file is not None:
+        # Check if this is a new file
+        if 'last_uploaded_file' not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
+            # This is a new file, reset session
+            reset_session_for_new_file()
+            st.session_state.last_uploaded_file = uploaded_file.name
+            logger = st.session_state.logger
+            
         try:
             file_handler = FileHandler()
             
@@ -165,7 +224,7 @@ def handle_file_upload(logger, llm_client):
                 data, file_info = file_handler.process_file(uploaded_file)
                 
                 st.session_state.data = data
-                st.session_state.original_data = data.copy()
+                st.session_state.original_data = data.copy() if isinstance(data, pd.DataFrame) else data
                 st.session_state.file_info = file_info
                 
                 logger.log("File uploaded successfully", {
@@ -179,8 +238,15 @@ def handle_file_upload(logger, llm_client):
             st.subheader("Data Preview")
             
             if isinstance(data, pd.DataFrame):
-                st.dataframe(data.head(10), use_container_width=True)
-                st.text(f"Shape: {data.shape[0]} rows × {data.shape[1]} columns")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.dataframe(data.head(10), use_container_width=True)
+                
+                with col2:
+                    st.metric("Rows", data.shape[0])
+                    st.metric("Columns", data.shape[1])
+                    st.metric("Size (MB)", f"{data.memory_usage(deep=True).sum() / 1024 / 1024:.2f}")
             else:
                 st.text_area("Text Data Preview", str(data)[:1000] + "..." if len(str(data)) > 1000 else str(data), height=300)
             
@@ -342,12 +408,9 @@ def handle_schema_management(logger, llm_client):
                                 })
                                 
                                 # Clear the NL state
-                                if 'nl_schema_code' in st.session_state:
-                                    del st.session_state.nl_schema_code
-                                if 'nl_schema_strategy' in st.session_state:
-                                    del st.session_state.nl_schema_strategy
-                                if 'proposed_schema' in st.session_state:
-                                    del st.session_state.proposed_schema
+                                for key in ['nl_schema_code', 'nl_schema_strategy', 'proposed_schema']:
+                                    if key in st.session_state:
+                                        del st.session_state[key]
                                 
                                 st.rerun()
                                 
@@ -357,25 +420,17 @@ def handle_schema_management(logger, llm_client):
                 with col2:
                     if st.button("✏️ Modify Instruction", key="modify_nl"):
                         # Clear the state to allow new instruction
-                        if 'nl_schema_code' in st.session_state:
-                            del st.session_state.nl_schema_code
-                        if 'nl_schema_strategy' in st.session_state:
-                            del st.session_state.nl_schema_strategy
-                        if 'proposed_schema' in st.session_state:
-                            del st.session_state.proposed_schema
+                        for key in ['nl_schema_code', 'nl_schema_strategy', 'proposed_schema']:
+                            if key in st.session_state:
+                                del st.session_state[key]
                         st.rerun()
                 
                 with col3:
                     if st.button("❌ Reject Changes", key="reject_nl_changes"):
                         # Clear all NL-related state
-                        if 'nl_schema_code' in st.session_state:
-                            del st.session_state.nl_schema_code
-                        if 'nl_schema_strategy' in st.session_state:
-                            del st.session_state.nl_schema_strategy
-                        if 'proposed_schema' in st.session_state:
-                            del st.session_state.proposed_schema
-                        if 'nl_instruction' in st.session_state:
-                            del st.session_state.nl_instruction
+                        for key in ['nl_schema_code', 'nl_schema_strategy', 'proposed_schema', 'nl_instruction']:
+                            if key in st.session_state:
+                                del st.session_state[key]
                         st.info("Changes rejected. Schema unchanged.")
                         st.rerun()
             else:
@@ -408,7 +463,7 @@ def handle_schema_management(logger, llm_client):
             st.rerun()
 
 def handle_data_analysis(logger, llm_client):
-    """Handle data quality analysis"""
+    """Handle data quality analysis with visualizations"""
     st.header("🔍 Data Quality Analysis")
     
     if st.session_state.data is None:
@@ -448,33 +503,176 @@ def handle_data_analysis(logger, llm_client):
             logger.log("Data analysis error", {"error": str(e)})
             return
     
-    # Display results
-    st.subheader("Quality Report")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.text("Basic Quality Metrics")
-        basic_info = quality_report.get('basic_info', {})
-        st.metric("Data Quality Score", f"{quality_report.get('quality_score', 0):.1f}/100")
-        st.metric("Total Rows", basic_info.get('row_count', 0))
-        st.metric("Total Columns", basic_info.get('column_count', 0))
-        st.metric("Missing Values", f"{quality_report['missing_values']['missing_percentage']:.1f}%")
-        st.metric("Duplicates", f"{quality_report['duplicates']['duplicate_percentage']:.1f}%")
-    
-    with col2:
-        st.text("Enhanced Analysis")
-        st.text_area("Analysis Summary", enhanced_analysis.get('summary', ''), height=200)
-        
-        if 'recommendations' in enhanced_analysis:
-            st.text("Recommendations:")
-            for rec in enhanced_analysis['recommendations']:
-                st.text(f"• {rec}")
-    
     # Store analysis results
     st.session_state.quality_report = quality_report
     st.session_state.enhanced_analysis = enhanced_analysis
     
+    # Create tabs for different analysis views
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Visualizations", "🔍 Detailed Report", "🤖 AI Insights"])
+    
+    with tab1:
+        # Display overview metrics
+        st.subheader("Quality Metrics Overview")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Data Quality Score", f"{quality_report.get('quality_score', 0):.1f}/100")
+        
+        with col2:
+            basic_info = quality_report.get('basic_info', {})
+            st.metric("Total Rows", f"{basic_info.get('row_count', 0):,}")
+        
+        with col3:
+            st.metric("Total Columns", basic_info.get('column_count', 0))
+        
+        with col4:
+            st.metric("Memory Usage", f"{basic_info.get('memory_usage_mb', 0):.2f} MB")
+        
+        # Issues summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Missing Values", f"{quality_report['missing_values']['missing_percentage']:.1f}%")
+        
+        with col2:
+            st.metric("Duplicates", f"{quality_report['duplicates']['duplicate_percentage']:.1f}%")
+        
+        with col3:
+            outlier_info = quality_report.get('outliers', {})
+            st.metric("Outliers", f"{outlier_info.get('outlier_percentage', 0):.1f}%")
+    
+    with tab2:
+        st.subheader("Data Visualizations")
+        
+        # Generate visualizations using LLM
+        if st.button("Generate Visualizations", key="generate_viz"):
+            with st.spinner("Generating visualization code..."):
+                try:
+                    viz_prompt = f"""
+                    Generate Python code to create 4 useful visualizations for this dataset.
+                    Dataset columns: {list(st.session_state.data.columns)}
+                    Data types: {st.session_state.data.dtypes.to_dict()}
+                    
+                    Create code that:
+                    1. Missing values heatmap
+                    2. Distribution plots for numeric columns
+                    3. Correlation matrix for numeric columns
+                    4. Category counts for categorical columns
+                    
+                    Use plotly for interactive visualizations.
+                    Return only executable Python code.
+                    The dataframe variable is 'df'.
+                    Store each figure in variables: fig1, fig2, fig3, fig4
+                    """
+                    
+                    viz_code = llm_client.generate_code(viz_prompt)
+                    
+                    # Execute visualization code
+                    import plotly.express as px
+                    import plotly.graph_objects as go
+                    from plotly.subplots import make_subplots
+                    import numpy as np
+                    
+                    exec_globals = {
+                        'df': st.session_state.data,
+                        'pd': pd,
+                        'np': np,
+                        'px': px,
+                        'go': go,
+                        'make_subplots': make_subplots,
+                        'plt': plt,
+                        'sns': sns
+                    }
+                    
+                    exec(viz_code, exec_globals)
+                    
+                    # Display the generated visualizations
+                    if 'fig1' in exec_globals:
+                        st.plotly_chart(exec_globals['fig1'], use_container_width=True)
+                    
+                    if 'fig2' in exec_globals:
+                        st.plotly_chart(exec_globals['fig2'], use_container_width=True)
+                    
+                    if 'fig3' in exec_globals:
+                        st.plotly_chart(exec_globals['fig3'], use_container_width=True)
+                    
+                    if 'fig4' in exec_globals:
+                        st.plotly_chart(exec_globals['fig4'], use_container_width=True)
+                    
+                    with st.expander("View Generated Visualization Code"):
+                        st.code(viz_code, language='python')
+                    
+                except Exception as e:
+                    st.error(f"Error generating visualizations: {str(e)}")
+                    
+                    # Fallback to basic visualizations
+                    st.info("Showing basic visualizations instead...")
+                    
+                    # Missing values bar chart
+                    missing_df = pd.DataFrame({
+                        'Column': st.session_state.data.columns,
+                        'Missing %': [(st.session_state.data[col].isnull().sum() / len(st.session_state.data)) * 100 
+                                     for col in st.session_state.data.columns]
+                    })
+                    fig = px.bar(missing_df, x='Column', y='Missing %', title='Missing Values by Column')
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    with tab3:
+        st.subheader("Detailed Quality Report")
+        
+        # Missing values details
+        with st.expander("🔍 Missing Values Analysis", expanded=True):
+            missing_info = quality_report['missing_values']
+            
+            if missing_info['columns_with_missing']:
+                missing_df = pd.DataFrame(missing_info['columns_with_missing']).T
+                st.dataframe(missing_df, use_container_width=True)
+                
+                if missing_info['problematic_columns']:
+                    st.warning(f"⚠️ Problematic columns (>{50}% missing): {', '.join(missing_info['problematic_columns'])}")
+        
+        # Duplicates details
+        with st.expander("🔍 Duplicates Analysis"):
+            dup_info = quality_report['duplicates']
+            st.write(f"Total duplicate rows: {dup_info['total_duplicates']}")
+            st.write(f"Duplicate percentage: {dup_info['duplicate_percentage']:.2f}%")
+            st.write(f"Unique rows: {dup_info['unique_rows']}")
+        
+        # Outliers details
+        with st.expander("🔍 Outliers Analysis"):
+            outlier_info = quality_report['outliers']
+            if outlier_info['columns_with_outliers']:
+                for col, info in outlier_info['columns_with_outliers'].items():
+                    st.write(f"**{col}**: {info['count']} outliers detected")
+        
+        # Data types analysis
+        with st.expander("🔍 Data Types Analysis"):
+            type_info = quality_report['data_types']
+            if type_info['type_suggestions']:
+                st.write("**Suggested Type Changes:**")
+                for col, suggestions in type_info['type_suggestions'].items():
+                    st.write(f"• {col}: {', '.join(suggestions)}")
+    
+    with tab4:
+        st.subheader("AI-Enhanced Analysis")
+        st.text_area("Analysis Summary", enhanced_analysis.get('summary', ''), height=150)
+        
+        if 'critical_issues' in enhanced_analysis:
+            st.write("**Critical Issues:**")
+            for issue in enhanced_analysis['critical_issues']:
+                st.write(f"• {issue}")
+        
+        if 'recommendations' in enhanced_analysis:
+            st.write("**Recommendations:**")
+            for rec in enhanced_analysis['recommendations']:
+                st.write(f"• {rec}")
+        
+        if 'cleaning_strategy' in enhanced_analysis:
+            st.info(f"**Suggested Strategy:** {enhanced_analysis['cleaning_strategy']}")
+    
+    # Proceed button
+    st.markdown("---")
     if st.button("🔧 Proceed to Data Correction", type="primary", key="analysis_to_correction_btn"):
         st.session_state.proceed_to_correction = True
         st.rerun()
@@ -656,7 +854,7 @@ def handle_finalization(logger, llm_client):
         with st.spinner("Generating pipeline..."):
             try:
                 pipeline_code = pipeline_generator.generate_pipeline(
-                    st.session_state.logs,
+                    logger.get_logs(),
                     st.session_state.schema,
                     getattr(st.session_state, 'correction_code', '')
                 )
@@ -678,52 +876,198 @@ def handle_finalization(logger, llm_client):
         st.subheader("Final Cleaned Data")
         st.dataframe(st.session_state.data.head(), use_container_width=True)
         
-        st.success("Data cleaning process completed! Check the Downloads tab for files.")
+        # Summary metrics
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            original_shape = st.session_state.original_data.shape if hasattr(st.session_state.original_data, 'shape') else (0, 0)
+            st.metric("Original Rows", original_shape[0])
+        
+        with col2:
+            final_shape = st.session_state.data.shape if hasattr(st.session_state.data, 'shape') else (0, 0)
+            st.metric("Final Rows", final_shape[0])
+        
+        with col3:
+            rows_removed = original_shape[0] - final_shape[0]
+            st.metric("Total Rows Removed", rows_removed)
+        
+        st.success("✅ Data cleaning process completed! Check the Downloads tab for files.")
 
 def display_logs(logger):
     """Display session logs"""
     st.header("📋 Session Logs")
     
-    logs = logger.get_logs()
+    # Log filters
+    col1, col2, col3 = st.columns(3)
     
+    with col1:
+        level_filter = st.selectbox(
+            "Filter by Level",
+            ["All", "INFO", "WARNING", "ERROR"],
+            key="log_level_filter"
+        )
+    
+    with col2:
+        action_filter = st.text_input(
+            "Filter by Action",
+            placeholder="Enter keyword",
+            key="log_action_filter"
+        )
+    
+    with col3:
+        limit = st.number_input(
+            "Max Logs",
+            min_value=10,
+            max_value=1000,
+            value=100,
+            step=10,
+            key="log_limit"
+        )
+    
+    # Get filtered logs
+    logs = logger.get_logs(
+        level=level_filter if level_filter != "All" else None,
+        action_filter=action_filter if action_filter else None,
+        limit=int(limit)
+    )
+    
+    # Display logs
     if logs:
+        st.write(f"Showing {len(logs)} log entries")
+        
         for log_entry in reversed(logs):
-            with st.expander(f"{log_entry['timestamp']} - {log_entry['action']}"):
-                st.json(log_entry['details'])
+            level = log_entry.get('level', 'INFO')
+            icon = "ℹ️" if level == "INFO" else "⚠️" if level == "WARNING" else "❌"
+            
+            with st.expander(f"{icon} [{log_entry['timestamp']}] {log_entry['action']}"):
+                # Display details in a formatted way
+                details = log_entry.get('details', {})
+                if details:
+                    for key, value in details.items():
+                        if isinstance(value, (dict, list)):
+                            st.json(value)
+                        else:
+                            st.write(f"**{key}**: {value}")
     else:
         st.info("No logs available.")
+    
+    # Performance metrics
+    with st.expander("📊 Performance Metrics"):
+        metrics = logger.get_performance_metrics()
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Operations", metrics['total_operations'])
+            st.metric("Successful", metrics['successful_operations'])
+        
+        with col2:
+            st.metric("LLM Interactions", metrics['llm_interactions'])
+            st.metric("Data Operations", metrics['data_operations'])
+        
+        with col3:
+            st.metric("Failed Operations", metrics['failed_operations'])
+            if metrics['average_execution_time'] > 0:
+                st.metric("Avg Execution Time", f"{metrics['average_execution_time']:.2f}s")
 
 def handle_downloads(logger):
     """Handle file downloads"""
     st.header("📥 Downloads")
     
     if st.session_state.data is not None:
-        # Cleaned dataset
-        csv_data = st.session_state.data.to_csv(index=False)
-        st.download_button(
-            label="Download Cleaned Dataset (CSV)",
-            data=csv_data,
-            file_name=f"cleaned_data_{st.session_state.session_id[:8]}.csv",
-            mime="text/csv"
-        )
+        col1, col2, col3 = st.columns(3)
         
-        # Log file - Use the logger's export function which handles serialization
-        log_json = logger.export_logs(format="json")
-        st.download_button(
-            label="Download Log File (JSON)",
-            data=log_json,
-            file_name=f"cleaning_log_{st.session_state.session_id[:8]}.json",
-            mime="application/json"
-        )
-        
-        # Pipeline script
-        if hasattr(st.session_state, 'pipeline_code'):
+        with col1:
+            # Cleaned dataset
+            csv_data = st.session_state.data.to_csv(index=False)
             st.download_button(
-                label="Download Pipeline Script (.py)",
-                data=st.session_state.pipeline_code,
-                file_name=f"data_pipeline_{st.session_state.session_id[:8]}.py",
-                mime="text/plain"
+                label="📊 Download Cleaned Dataset (CSV)",
+                data=csv_data,
+                file_name=f"cleaned_data_{st.session_state.session_id[:8]}.csv",
+                mime="text/csv",
+                help="Download the cleaned dataset in CSV format"
             )
+        
+        with col2:
+            # Log file - Use the logger's export function which handles serialization
+            log_json = logger.export_logs(format="json")
+            st.download_button(
+                label="📋 Download Log File (JSON)",
+                data=log_json,
+                file_name=f"cleaning_log_{st.session_state.session_id[:8]}.json",
+                mime="application/json",
+                help="Download complete session logs"
+            )
+        
+        with col3:
+            # Pipeline script
+            if hasattr(st.session_state, 'pipeline_code'):
+                st.download_button(
+                    label="🐍 Download Pipeline Script (.py)",
+                    data=st.session_state.pipeline_code,
+                    file_name=f"data_pipeline_{st.session_state.session_id[:8]}.py",
+                    mime="text/plain",
+                    help="Download reusable Python pipeline"
+                )
+        
+        # Additional export options
+        st.subheader("Additional Export Options")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Export as Excel
+            if st.button("Generate Excel Report", key="gen_excel"):
+                with st.spinner("Generating Excel report..."):
+                    from io import BytesIO
+                    output = BytesIO()
+                    
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        # Cleaned data
+                        st.session_state.data.to_excel(writer, sheet_name='Cleaned Data', index=False)
+                        
+                        # Original data (if available)
+                        if hasattr(st.session_state, 'original_data') and isinstance(st.session_state.original_data, pd.DataFrame):
+                            st.session_state.original_data.to_excel(writer, sheet_name='Original Data', index=False)
+                        
+                        # Schema
+                        if st.session_state.schema:
+                            schema_df = pd.DataFrame(st.session_state.schema).T
+                            schema_df.to_excel(writer, sheet_name='Schema')
+                        
+                        # Summary
+                        summary_data = {
+                            'Metric': ['Original Rows', 'Final Rows', 'Rows Removed', 'Columns'],
+                            'Value': [
+                                st.session_state.original_data.shape[0] if hasattr(st.session_state.original_data, 'shape') else 0,
+                                st.session_state.data.shape[0],
+                                (st.session_state.original_data.shape[0] if hasattr(st.session_state.original_data, 'shape') else 0) - st.session_state.data.shape[0],
+                                st.session_state.data.shape[1]
+                            ]
+                        }
+                        summary_df = pd.DataFrame(summary_data)
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    
+                    excel_data = output.getvalue()
+                    
+                    st.download_button(
+                        label="📑 Download Excel Report",
+                        data=excel_data,
+                        file_name=f"data_cleaning_report_{st.session_state.session_id[:8]}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+        
+        with col2:
+            # Export logs as text
+            if st.button("Generate Text Report", key="gen_text"):
+                text_report = logger.export_logs(format="txt")
+                
+                st.download_button(
+                    label="📄 Download Text Report",
+                    data=text_report,
+                    file_name=f"cleaning_report_{st.session_state.session_id[:8]}.txt",
+                    mime="text/plain"
+                )
     else:
         st.info("No data available for download. Please process a file first.")
 

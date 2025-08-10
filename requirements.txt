@@ -24,3 +24,7 @@ openai>=1.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 
+# Visualization libraries
+plotly>=5.17.0
+matplotlib>=3.6.0
+seaborn>=0.12.0
