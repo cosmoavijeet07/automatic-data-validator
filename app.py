@@ -9,7 +9,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
-from plotly.subplots import make_subplots
 
 # Import custom modules
 from config import MODELS, SUPPORTED_FILE_TYPES
@@ -474,61 +473,203 @@ def handle_data_analysis(logger, llm_client):
     data_analyzer = DataAnalyzer(llm_client)
     
     # Basic profiling
-    if 'quality_report' not in st.session_state:
-        with st.spinner("Analyzing data quality..."):
-            try:
-                # Generate basic quality report
-                quality_report = data_analyzer.generate_quality_report(st.session_state.data)
-                
-                # Enhanced LLM analysis (if available)
-                if llm_client and llm_client.client:
-                    try:
-                        enhanced_analysis = data_analyzer.enhanced_llm_analysis(
-                            st.session_state.data, 
-                            st.session_state.schema,
-                            quality_report
-                        )
-                    except Exception as e:
-                        st.warning(f"LLM analysis failed: {str(e)}. Using basic analysis.")
-                        enhanced_analysis = data_analyzer._fallback_analysis(quality_report)
-                else:
-                    st.info("LLM not available. Using basic analysis.")
+    with st.spinner("Analyzing data quality..."):
+        try:
+            # Generate basic quality report
+            quality_report = data_analyzer.generate_quality_report(st.session_state.data)
+            
+            # Enhanced LLM analysis (if available)
+            if llm_client and llm_client.client:
+                try:
+                    enhanced_analysis = data_analyzer.enhanced_llm_analysis(
+                        st.session_state.data, 
+                        st.session_state.schema,
+                        quality_report
+                    )
+                except Exception as e:
+                    st.warning(f"LLM analysis failed: {str(e)}. Using basic analysis.")
                     enhanced_analysis = data_analyzer._fallback_analysis(quality_report)
-                
-                logger.log("Data analysis completed", {
-                    "quality_report": quality_report,
-                    "enhanced_analysis": enhanced_analysis
-                })
-                
-                # Store in session state
-                st.session_state.quality_report = quality_report
-                st.session_state.enhanced_analysis = enhanced_analysis
-                
-            except Exception as e:
-                st.error(f"Error during data analysis: {str(e)}")
-                logger.log("Data analysis error", {"error": str(e)})
-                return
-    else:
-        quality_report = st.session_state.quality_report
-        enhanced_analysis = st.session_state.enhanced_analysis
+            else:
+                st.info("LLM not available. Using basic analysis.")
+                enhanced_analysis = data_analyzer._fallback_analysis(quality_report)
+            
+            logger.log("Data analysis completed", {
+                "quality_report": quality_report,
+                "enhanced_analysis": enhanced_analysis
+            })
+            
+        except Exception as e:
+            st.error(f"Error during data analysis: {str(e)}")
+            logger.log("Data analysis error", {"error": str(e)})
+            return
+    
+    # Store analysis results
+    st.session_state.quality_report = quality_report
+    st.session_state.enhanced_analysis = enhanced_analysis
     
     # Create tabs for different analysis views
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "📈 Visualizations", "🔍 Complete Analysis", "🤖 AI Insights", "📋 Raw Report"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Visualizations", "🔍 Detailed Report", "🤖 AI Insights"])
     
     with tab1:
-        display_analysis_overview(quality_report)
+        # Display overview metrics
+        st.subheader("Quality Metrics Overview")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Data Quality Score", f"{quality_report.get('quality_score', 0):.1f}/100")
+        
+        with col2:
+            basic_info = quality_report.get('basic_info', {})
+            st.metric("Total Rows", f"{basic_info.get('row_count', 0):,}")
+        
+        with col3:
+            st.metric("Total Columns", basic_info.get('column_count', 0))
+        
+        with col4:
+            st.metric("Memory Usage", f"{basic_info.get('memory_usage_mb', 0):.2f} MB")
+        
+        # Issues summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Missing Values", f"{quality_report['missing_values']['missing_percentage']:.1f}%")
+        
+        with col2:
+            st.metric("Duplicates", f"{quality_report['duplicates']['duplicate_percentage']:.1f}%")
+        
+        with col3:
+            outlier_info = quality_report.get('outliers', {})
+            st.metric("Outliers", f"{outlier_info.get('outlier_percentage', 0):.1f}%")
     
     with tab2:
-        handle_visualization_generation(logger, llm_client, quality_report)
+        st.subheader("Data Visualizations")
+        
+        # Generate visualizations using LLM
+        if st.button("Generate Visualizations", key="generate_viz"):
+            with st.spinner("Generating visualization code..."):
+                try:
+                    viz_prompt = f"""
+                    Generate Python code to create 4 useful visualizations for this dataset.
+                    Dataset columns: {list(st.session_state.data.columns)}
+                    Data types: {st.session_state.data.dtypes.to_dict()}
+                    
+                    Create code that:
+                    1. Missing values heatmap
+                    2. Distribution plots for numeric columns
+                    3. Correlation matrix for numeric columns
+                    4. Category counts for categorical columns
+                    
+                    Use plotly for interactive visualizations.
+                    Return only executable Python code.
+                    The dataframe variable is 'df'.
+                    Store each figure in variables: fig1, fig2, fig3, fig4
+                    """
+                    
+                    viz_code = llm_client.generate_code(viz_prompt)
+                    
+                    # Execute visualization code
+                    import plotly.express as px
+                    import plotly.graph_objects as go
+                    from plotly.subplots import make_subplots
+                    import numpy as np
+                    
+                    exec_globals = {
+                        'df': st.session_state.data,
+                        'pd': pd,
+                        'np': np,
+                        'px': px,
+                        'go': go,
+                        'make_subplots': make_subplots,
+                        'plt': plt,
+                        'sns': sns
+                    }
+                    
+                    exec(viz_code, exec_globals)
+                    
+                    # Display the generated visualizations
+                    if 'fig1' in exec_globals:
+                        st.plotly_chart(exec_globals['fig1'], use_container_width=True)
+                    
+                    if 'fig2' in exec_globals:
+                        st.plotly_chart(exec_globals['fig2'], use_container_width=True)
+                    
+                    if 'fig3' in exec_globals:
+                        st.plotly_chart(exec_globals['fig3'], use_container_width=True)
+                    
+                    if 'fig4' in exec_globals:
+                        st.plotly_chart(exec_globals['fig4'], use_container_width=True)
+                    
+                    with st.expander("View Generated Visualization Code"):
+                        st.code(viz_code, language='python')
+                    
+                except Exception as e:
+                    st.error(f"Error generating visualizations: {str(e)}")
+                    
+                    # Fallback to basic visualizations
+                    st.info("Showing basic visualizations instead...")
+                    
+                    # Missing values bar chart
+                    missing_df = pd.DataFrame({
+                        'Column': st.session_state.data.columns,
+                        'Missing %': [(st.session_state.data[col].isnull().sum() / len(st.session_state.data)) * 100 
+                                     for col in st.session_state.data.columns]
+                    })
+                    fig = px.bar(missing_df, x='Column', y='Missing %', title='Missing Values by Column')
+                    st.plotly_chart(fig, use_container_width=True)
     
     with tab3:
-        display_complete_analysis(quality_report, enhanced_analysis)
+        st.subheader("Detailed Quality Report")
+        
+        # Missing values details
+        with st.expander("🔍 Missing Values Analysis", expanded=True):
+            missing_info = quality_report['missing_values']
+            
+            if missing_info['columns_with_missing']:
+                missing_df = pd.DataFrame(missing_info['columns_with_missing']).T
+                st.dataframe(missing_df, use_container_width=True)
+                
+                if missing_info['problematic_columns']:
+                    st.warning(f"⚠️ Problematic columns (>{50}% missing): {', '.join(missing_info['problematic_columns'])}")
+        
+        # Duplicates details
+        with st.expander("🔍 Duplicates Analysis"):
+            dup_info = quality_report['duplicates']
+            st.write(f"Total duplicate rows: {dup_info['total_duplicates']}")
+            st.write(f"Duplicate percentage: {dup_info['duplicate_percentage']:.2f}%")
+            st.write(f"Unique rows: {dup_info['unique_rows']}")
+        
+        # Outliers details
+        with st.expander("🔍 Outliers Analysis"):
+            outlier_info = quality_report['outliers']
+            if outlier_info['columns_with_outliers']:
+                for col, info in outlier_info['columns_with_outliers'].items():
+                    st.write(f"**{col}**: {info['count']} outliers detected")
+        
+        # Data types analysis
+        with st.expander("🔍 Data Types Analysis"):
+            type_info = quality_report['data_types']
+            if type_info['type_suggestions']:
+                st.write("**Suggested Type Changes:**")
+                for col, suggestions in type_info['type_suggestions'].items():
+                    st.write(f"• {col}: {', '.join(suggestions)}")
     
     with tab4:
-        display_ai_insights(enhanced_analysis)
-    
-    with tab5:
-        display_raw_report(quality_report, enhanced_analysis)
+        st.subheader("AI-Enhanced Analysis")
+        st.text_area("Analysis Summary", enhanced_analysis.get('summary', ''), height=150)
+        
+        if 'critical_issues' in enhanced_analysis:
+            st.write("**Critical Issues:**")
+            for issue in enhanced_analysis['critical_issues']:
+                st.write(f"• {issue}")
+        
+        if 'recommendations' in enhanced_analysis:
+            st.write("**Recommendations:**")
+            for rec in enhanced_analysis['recommendations']:
+                st.write(f"• {rec}")
+        
+        if 'cleaning_strategy' in enhanced_analysis:
+            st.info(f"**Suggested Strategy:** {enhanced_analysis['cleaning_strategy']}")
     
     # Proceed button
     st.markdown("---")
@@ -536,437 +677,8 @@ def handle_data_analysis(logger, llm_client):
         st.session_state.proceed_to_correction = True
         st.rerun()
 
-def display_analysis_overview(quality_report):
-    """Display overview metrics from the analysis"""
-    st.subheader("Quality Metrics Overview")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Data Quality Score", f"{quality_report.get('quality_score', 0):.1f}/100")
-    
-    with col2:
-        basic_info = quality_report.get('basic_info', {})
-        st.metric("Total Rows", f"{basic_info.get('row_count', 0):,}")
-    
-    with col3:
-        st.metric("Total Columns", basic_info.get('column_count', 0))
-    
-    with col4:
-        st.metric("Memory Usage", f"{basic_info.get('memory_usage_mb', 0):.2f} MB")
-    
-    # Issues summary
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Missing Values", f"{quality_report['missing_values']['missing_percentage']:.1f}%")
-    
-    with col2:
-        st.metric("Duplicates", f"{quality_report['duplicates']['duplicate_percentage']:.1f}%")
-    
-    with col3:
-        outlier_info = quality_report.get('outliers', {})
-        st.metric("Outliers", f"{outlier_info.get('outlier_percentage', 0):.1f}%")
-
-def handle_visualization_generation(logger, llm_client, quality_report):
-    """Handle visualization generation with edit capability"""
-    st.subheader("Data Visualizations")
-    
-    # Generate visualizations using LLM
-    if st.button("Generate EDA Visualizations", key="generate_viz"):
-        with st.spinner("Generating visualization code..."):
-            try:
-                # Create comprehensive prompt with all analysis data
-                viz_prompt = f"""
-                Generate Python code for comprehensive Exploratory Data Analysis (EDA) visualizations.
-                
-                DATASET INFORMATION:
-                - Columns: {list(st.session_state.data.columns)}
-                - Data types: {json.dumps({col: str(dtype) for col, dtype in st.session_state.data.dtypes.to_dict().items()}, indent=2)}
-                - Shape: {st.session_state.data.shape}
-                
-                CURRENT SCHEMA:
-                {json.dumps(st.session_state.schema, indent=2, default=str)}
-                
-                QUALITY ANALYSIS RESULTS:
-                - Missing values: {quality_report['missing_values']['missing_percentage']:.1f}%
-                - Duplicates: {quality_report['duplicates']['duplicate_percentage']:.1f}%
-                - Outliers: {quality_report['outliers'].get('outlier_percentage', 0):.1f}%
-                - Numeric columns: {quality_report.get('numeric_analysis', {}).get('numeric_columns', [])}
-                - Categorical columns: {quality_report.get('categorical_analysis', {}).get('categorical_columns', [])}
-                
-                Create at least 6 comprehensive visualizations:
-                1. Missing values heatmap showing patterns
-                2. Distribution plots for all numeric columns (subplots)
-                3. Correlation matrix heatmap for numeric columns
-                4. Box plots for outlier detection in numeric columns
-                5. Bar charts for categorical column value counts
-                6. Pair plot or scatter matrix for numeric relationships
-                
-                Requirements:
-                - Use plotly for interactive visualizations
-                - Import all necessary libraries at the beginning
-                - The dataframe variable is 'df'
-                - Store each figure in variables: fig1, fig2, fig3, fig4, fig5, fig6
-                - Add proper titles and labels to all plots
-                - Handle edge cases (e.g., no numeric columns, all missing values)
-                - Include print statements for any insights discovered
-                
-                Return only executable Python code.
-                """
-                
-                viz_code = llm_client.generate_code(viz_prompt)
-                
-                # Store in session state
-                st.session_state.viz_code = viz_code
-                st.session_state.viz_generated = True
-                
-                logger.log("Visualization code generated", {"code_length": len(viz_code)})
-                st.success("Visualization code generated successfully!")
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"Error generating visualization code: {str(e)}")
-                logger.log("Visualization generation error", {"error": str(e)})
-    
-    # Display and execute visualization code if generated
-    if hasattr(st.session_state, 'viz_code') and st.session_state.viz_code:
-        st.subheader("📊 Generated Visualization Code")
-        
-        # Show the code
-        with st.expander("View/Edit Visualization Code", expanded=True):
-            if hasattr(st.session_state, 'edit_viz_code') and st.session_state.edit_viz_code:
-                # Edit mode
-                edited_code = st.text_area(
-                    "Edit the visualization code:",
-                    value=st.session_state.viz_code,
-                    height=400,
-                    key="viz_code_editor"
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("💾 Save Changes", key="save_viz_code"):
-                        st.session_state.viz_code = edited_code
-                        st.session_state.edit_viz_code = False
-                        st.success("Code updated!")
-                        st.rerun()
-                
-                with col2:
-                    if st.button("❌ Cancel", key="cancel_viz_edit"):
-                        st.session_state.edit_viz_code = False
-                        st.rerun()
-            else:
-                # Display mode
-                st.code(st.session_state.viz_code, language='python')
-        
-        # Action buttons
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("▶️ Execute Visualizations", type="primary", key="execute_viz"):
-                execute_visualization_code(st.session_state.viz_code, logger)
-        
-        with col2:
-            if st.button("✏️ Edit Code", key="edit_viz_button"):
-                st.session_state.edit_viz_code = True
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 Regenerate", key="regenerate_viz"):
-                if 'viz_code' in st.session_state:
-                    del st.session_state.viz_code
-                if 'viz_generated' in st.session_state:
-                    del st.session_state.viz_generated
-                st.rerun()
-
-def execute_visualization_code(viz_code, logger):
-    """Execute the visualization code and display results"""
-    with st.spinner("Executing visualization code..."):
-        try:
-            import plotly.express as px
-            import plotly.graph_objects as go
-            from plotly.subplots import make_subplots
-            import numpy as np
-            import warnings
-            warnings.filterwarnings('ignore')
-            
-            # Capture output
-            from io import StringIO
-            import sys
-            captured_output = StringIO()
-            old_stdout = sys.stdout
-            sys.stdout = captured_output
-            
-            # Create execution environment
-            exec_globals = {
-                'df': st.session_state.data.copy(),
-                'pd': pd,
-                'np': np,
-                'px': px,
-                'go': go,
-                'make_subplots': make_subplots,
-                'plt': plt,
-                'sns': sns,
-                'print': print,
-                'warnings': warnings
-            }
-            
-            # Execute the code
-            exec(viz_code, exec_globals)
-            
-            # Restore stdout
-            sys.stdout = old_stdout
-            output = captured_output.getvalue()
-            
-            # Display any printed output
-            if output:
-                st.subheader("📝 Analysis Output")
-                st.text(output)
-            
-            # Display the generated visualizations
-            st.subheader("📈 Generated Visualizations")
-            
-            # Check for figures and display them
-            for i in range(1, 10):  # Check for up to 9 figures
-                fig_name = f'fig{i}'
-                if fig_name in exec_globals:
-                    st.plotly_chart(exec_globals[fig_name], use_container_width=True)
-            
-            logger.log("Visualizations executed successfully", {"figures_generated": sum(1 for i in range(1, 10) if f'fig{i}' in exec_globals)})
-            st.success("Visualizations generated successfully!")
-            
-        except Exception as e:
-            st.error(f"Error executing visualization code: {str(e)}")
-            logger.log("Visualization execution error", {"error": str(e), "traceback": traceback.format_exc()})
-            
-            # Show the error and offer to fix
-            st.warning("Would you like to regenerate the code or edit it manually?")
-
-def display_complete_analysis(quality_report, enhanced_analysis):
-    """Display complete analysis from quality report"""
-    st.subheader("Complete Data Quality Analysis")
-    
-    # Basic Information
-    with st.expander("📊 Basic Information", expanded=True):
-        basic_info = quality_report.get('basic_info', {})
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Dataset Dimensions:**")
-            st.write(f"- Rows: {basic_info.get('row_count', 0):,}")
-            st.write(f"- Columns: {basic_info.get('column_count', 0)}")
-            st.write(f"- Total Cells: {basic_info.get('total_cells', 0):,}")
-        
-        with col2:
-            st.write("**Memory & Data:**")
-            st.write(f"- Memory Usage: {basic_info.get('memory_usage_mb', 0):.2f} MB")
-            st.write(f"- Non-null Cells: {basic_info.get('non_null_cells', 0):,}")
-            st.write(f"- Null Cells: {basic_info.get('null_cells', 0):,}")
-    
-    # Missing Values Analysis
-    with st.expander("🔍 Missing Values Analysis", expanded=True):
-        missing_info = quality_report['missing_values']
-        
-        st.write(f"**Overall Missing: {missing_info['missing_percentage']:.2f}%**")
-        
-        if missing_info['columns_with_missing']:
-            missing_df = pd.DataFrame(missing_info['columns_with_missing']).T
-            missing_df = missing_df.sort_values('percentage', ascending=False)
-            
-            # Create a bar chart for missing values
-            fig = px.bar(
-                x=missing_df.index,
-                y=missing_df['percentage'],
-                title="Missing Values by Column",
-                labels={'x': 'Column', 'y': 'Missing %'},
-                color=missing_df['percentage'],
-                color_continuous_scale='Reds'
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.dataframe(missing_df, use_container_width=True)
-            
-            if missing_info['problematic_columns']:
-                st.error(f"⚠️ High missing columns (>50%): {', '.join(missing_info['problematic_columns'])}")
-        
-        # Missing patterns
-        if missing_info.get('missing_patterns'):
-            st.write("**Missing Value Patterns:**")
-            patterns = missing_info['missing_patterns']
-            st.write(f"- Rows with multiple missing: {patterns.get('rows_with_multiple_missing', 0)}")
-            st.write(f"- Max missing per row: {patterns.get('max_missing_per_row', 0)}")
-            
-            if patterns.get('correlated_missing'):
-                st.write("**Correlated Missing Values:**")
-                for corr in patterns['correlated_missing']:
-                    st.write(f"- {corr['column1']} ↔ {corr['column2']}: {corr['correlation']:.2f}")
-    
-    # Duplicates Analysis
-    with st.expander("🔍 Duplicates Analysis"):
-        dup_info = quality_report['duplicates']
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Duplicates", f"{dup_info['total_duplicates']:,}")
-            st.metric("Duplicate %", f"{dup_info['duplicate_percentage']:.2f}%")
-        
-        with col2:
-            st.metric("Unique Rows", f"{dup_info['unique_rows']:,}")
-            if dup_info.get('is_problematic'):
-                st.error("⚠️ High duplicate rate detected!")
-        
-        if dup_info.get('partial_duplicates'):
-            st.write("**Partial Duplicates by Column:**")
-            for col, info in dup_info['partial_duplicates'].items():
-                st.write(f"- {col}: {info['count']} ({info['percentage']:.1f}%)")
-    
-    # Data Types Analysis
-    with st.expander("🔍 Data Types Analysis"):
-        type_info = quality_report['data_types']
-        
-        st.write("**Current Data Types Distribution:**")
-        type_counts = pd.Series(type_info['current_types'])
-        fig = px.pie(values=type_counts.values, names=type_counts.index, title="Data Types Distribution")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        if type_info['type_suggestions']:
-            st.write("**Suggested Type Changes:**")
-            for col, suggestions in type_info['type_suggestions'].items():
-                st.write(f"• **{col}**: {', '.join(suggestions)}")
-    
-    # Outliers Analysis
-    with st.expander("🔍 Outliers Analysis"):
-        outlier_info = quality_report['outliers']
-        
-        st.write(f"**Total Outlier Rows: {outlier_info.get('total_outlier_rows', 0)} ({outlier_info.get('outlier_percentage', 0):.1f}%)**")
-        
-        if outlier_info['columns_with_outliers']:
-            st.write("**Outliers by Column:**")
-            outlier_data = []
-            for col, info in outlier_info['columns_with_outliers'].items():
-                outlier_data.append({
-                    'Column': col,
-                    'Outlier Count': info['count'],
-                    'IQR Method': info['methods']['iqr']['count'],
-                    'Z-Score Method': info['methods'].get('zscore', {}).get('count', 0)
-                })
-            
-            outlier_df = pd.DataFrame(outlier_data)
-            st.dataframe(outlier_df, use_container_width=True)
-    
-    # Categorical Analysis
-    if 'categorical_analysis' in quality_report:
-        with st.expander("🔍 Categorical Columns Analysis"):
-            cat_info = quality_report['categorical_analysis']
-            
-            if cat_info['categorical_columns']:
-                st.write(f"**Categorical Columns: {', '.join(cat_info['categorical_columns'])}**")
-                
-                for col in cat_info['categorical_columns'][:5]:  # Show first 5
-                    if col in cat_info['value_distributions']:
-                        dist = cat_info['value_distributions'][col]
-                        st.write(f"\n**{col}:**")
-                        st.write(f"- Unique values: {dist['unique_count']}")
-                        st.write(f"- Rare values (appearing once): {dist['rare_values']}")
-                        
-                        # Show top values
-                        if dist['top_values']:
-                            top_df = pd.DataFrame(list(dist['top_values'].items()), columns=['Value', 'Count'])
-                            st.dataframe(top_df, use_container_width=True)
-                
-                if cat_info.get('inconsistencies'):
-                    st.warning("**Data Inconsistencies Found:**")
-                    for col, issues in cat_info['inconsistencies'].items():
-                        st.write(f"**{col}:**")
-                        for issue in issues:
-                            st.write(f"- {issue['type']}: {issue['variants']}")
-                            st.write(f"  Suggested: '{issue['suggested_value']}'")
-    
-    # Numeric Analysis
-    if 'numeric_analysis' in quality_report:
-        with st.expander("🔍 Numeric Columns Analysis"):
-            num_info = quality_report['numeric_analysis']
-            
-            if num_info['numeric_columns']:
-                st.write(f"**Numeric Columns: {', '.join(num_info['numeric_columns'])}**")
-                
-                # Distribution info
-                if num_info.get('distributions'):
-                    dist_data = []
-                    for col, dist in num_info['distributions'].items():
-                        dist_data.append({
-                            'Column': col,
-                            'Skewness': f"{dist['skewness']:.2f}",
-                            'Kurtosis': f"{dist['kurtosis']:.2f}",
-                            'Normal': '✅' if dist['is_normal'] else '❌'
-                        })
-                    
-                    if dist_data:
-                        dist_df = pd.DataFrame(dist_data)
-                        st.dataframe(dist_df, use_container_width=True)
-                
-                # High correlations
-                if num_info.get('correlations') and num_info['correlations'].get('high_correlations'):
-                    st.warning("**High Correlations Detected:**")
-                    for corr in num_info['correlations']['high_correlations']:
-                        st.write(f"- {corr['column1']} ↔ {corr['column2']}: {corr['correlation']:.2f}")
-    
-    # Data Consistency
-    if 'data_consistency' in quality_report:
-        with st.expander("🔍 Data Consistency Check"):
-            consistency_info = quality_report['data_consistency']
-            
-            if consistency_info['issues']:
-                st.warning(f"**Found {len(consistency_info['issues'])} consistency issues**")
-                
-                for issue in consistency_info['issues']:
-                    st.write(f"**{issue['type']}** in column '{issue['column']}'")
-                    if 'types_found' in issue:
-                        st.write(f"  Types found: {', '.join(issue['types_found'])}")
-
-def display_ai_insights(enhanced_analysis):
-    """Display AI-generated insights"""
-    st.subheader("AI-Enhanced Analysis")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.text_area("**Analysis Summary**", enhanced_analysis.get('summary', ''), height=150, disabled=True)
-    
-    with col2:
-        if 'business_impact' in enhanced_analysis:
-            st.info(f"**Business Impact:**\n{enhanced_analysis['business_impact']}")
-    
-    if 'critical_issues' in enhanced_analysis:
-        st.error("**Critical Issues:**")
-        for issue in enhanced_analysis['critical_issues']:
-            st.write(f"• {issue}")
-    
-    if 'recommendations' in enhanced_analysis:
-        st.warning("**Recommendations:**")
-        for i, rec in enumerate(enhanced_analysis['recommendations'], 1):
-            st.write(f"{i}. {rec}")
-    
-    if 'cleaning_strategy' in enhanced_analysis:
-        st.success(f"**Suggested Strategy:** {enhanced_analysis['cleaning_strategy']}")
-
-def display_raw_report(quality_report, enhanced_analysis):
-    """Display raw analysis reports in JSON format"""
-    st.subheader("Raw Analysis Reports")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**Quality Report (JSON)**")
-        st.json(quality_report)
-    
-    with col2:
-        st.write("**Enhanced Analysis (JSON)**")
-        st.json(enhanced_analysis)
-
 def handle_data_correction(logger, llm_client):
-    """Handle data correction with comprehensive context"""
+    """Handle data correction"""
     st.header("🔧 Data Correction")
     
     if st.session_state.data is None:
@@ -978,45 +690,29 @@ def handle_data_correction(logger, llm_client):
     # User input for additional instructions
     user_instructions = st.text_area(
         "Additional correction instructions (optional)",
-        placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels, handle missing values with median for numeric and mode for categorical'",
-        key="correction_instructions",
-        height=100
+        placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels'",
+        key="correction_instructions"
     )
-    
-    # Error feedback section (if there was a previous error)
-    if hasattr(st.session_state, 'correction_error'):
-        st.error("Previous execution failed. The error has been included in the regeneration context.")
-        with st.expander("View Previous Error"):
-            st.code(st.session_state.correction_error)
     
     if st.button("Generate Correction Code", key="generate_correction_button"):
         if not llm_client or not llm_client.client:
             st.error("LLM client not available. Please check your OpenAI API key.")
             return
             
-        with st.spinner("Generating comprehensive correction strategy..."):
+        with st.spinner("Generating correction strategy..."):
             try:
-                # Include previous error in context if exists
-                error_context = ""
-                if hasattr(st.session_state, 'correction_error'):
-                    error_context = f"\n\nPREVIOUS ERROR TO AVOID:\n{st.session_state.correction_error}"
-                    # Clear the error after including it
-                    del st.session_state.correction_error
-                
-                # Enhanced generation with full context
-                correction_code, strategy_summary = data_corrector.generate_correction_code_with_full_context(
+                correction_code, strategy_summary = data_corrector.generate_correction_code(
                     st.session_state.data,
                     st.session_state.schema,
                     st.session_state.quality_report,
-                    user_instructions + error_context
+                    user_instructions
                 )
                 
                 st.session_state.correction_code = correction_code
                 st.session_state.strategy_summary = strategy_summary
                 
                 logger.log("Correction code generated", {
-                    "strategy_summary": strategy_summary,
-                    "includes_error_fix": bool(error_context)
+                    "strategy_summary": strategy_summary
                 })
                 
                 st.success("Correction code generated successfully!")
@@ -1032,27 +728,34 @@ def handle_data_correction(logger, llm_client):
         st.subheader("📋 Correction Strategy")
         st.info(st.session_state.strategy_summary)
         
-        # Show what will be addressed
-        with st.expander("📊 Issues to be Addressed"):
-            quality_report = st.session_state.quality_report
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Data Quality Issues:**")
-                st.write(f"• Missing Values: {quality_report['missing_values']['missing_percentage']:.1f}%")
-                st.write(f"• Duplicates: {quality_report['duplicates']['duplicate_percentage']:.1f}%")
-                st.write(f"• Outliers: {quality_report['outliers'].get('outlier_percentage', 0):.1f}%")
-            
-            with col2:
-                st.write("**Schema Information:**")
-                st.write(f"• Total Columns: {len(st.session_state.schema)}")
-                st.write(f"• Data Types: {', '.join(set(str(v.get('dtype', 'unknown')) for v in st.session_state.schema.values()))}")
-        
         st.subheader("🔧 Generated Correction Code")
+        st.code(st.session_state.correction_code, language='python')
         
-        # Code display/edit section
+        # Action buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("✅ Execute Correction", type="primary", key="execute_correction_button"):
+                execute_correction(data_corrector, logger)
+        
+        with col2:
+            if st.button("✏️ Modify Code", key="modify_code_button"):
+                st.session_state.show_code_editor = True
+                st.rerun()
+        
+        with col3:
+            if st.button("🔄 Regenerate Code", key="regenerate_code_button"):
+                # Clear existing code to trigger regeneration
+                if 'correction_code' in st.session_state:
+                    del st.session_state.correction_code
+                if 'strategy_summary' in st.session_state:
+                    del st.session_state.strategy_summary
+                st.rerun()
+        
+        # Code editor (if user wants to modify)
         if hasattr(st.session_state, 'show_code_editor') and st.session_state.show_code_editor:
-            # Edit mode
+            st.subheader("✏️ Modify Correction Code")
+            
             modified_code = st.text_area(
                 "Edit the correction code:",
                 value=st.session_state.correction_code,
@@ -1073,36 +776,12 @@ def handle_data_correction(logger, llm_client):
                 if st.button("❌ Cancel", key="cancel_code_edit"):
                     st.session_state.show_code_editor = False
                     st.rerun()
-        else:
-            # Display mode
-            st.code(st.session_state.correction_code, language='python')
-        
-        # Action buttons
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("✅ Execute Correction", type="primary", key="execute_correction_button"):
-                execute_correction_with_feedback(data_corrector, logger)
-        
-        with col2:
-            if st.button("✏️ Modify Code", key="modify_code_button"):
-                st.session_state.show_code_editor = True
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 Regenerate Code", key="regenerate_code_button"):
-                # Clear existing code to trigger regeneration
-                if 'correction_code' in st.session_state:
-                    del st.session_state.correction_code
-                if 'strategy_summary' in st.session_state:
-                    del st.session_state.strategy_summary
-                st.rerun()
     
     else:
-        st.info("👆 Click 'Generate Correction Code' to create a data cleaning strategy based on the complete analysis.")
+        st.info("👆 Click 'Generate Correction Code' to create a data cleaning strategy.")
 
-def execute_correction_with_feedback(data_corrector, logger):
-    """Execute correction code with error feedback capability"""
+def execute_correction(data_corrector, logger):
+    """Execute the correction code"""
     with st.spinner("Executing correction..."):
         try:
             corrected_data, execution_log = data_corrector.execute_correction_code(
@@ -1116,27 +795,19 @@ def execute_correction_with_feedback(data_corrector, logger):
                 
                 st.success("🎉 Data correction completed successfully!")
                 
-                # Clear any previous errors
-                if 'correction_error' in st.session_state:
-                    del st.session_state.correction_error
-                
                 # Show before/after comparison
                 st.subheader("📊 Correction Results")
-                col1, col2, col3, col4 = st.columns(4)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("Original Rows", f"{execution_log['original_shape'][0]:,}")
+                    st.metric("Original Rows", execution_log['original_shape'][0])
                 
                 with col2:
-                    st.metric("Final Rows", f"{execution_log['final_shape'][0]:,}")
+                    st.metric("Final Rows", execution_log['final_shape'][0])
                 
                 with col3:
                     rows_removed = execution_log.get('rows_removed', 0)
-                    st.metric("Rows Removed", f"{rows_removed:,}")
-                
-                with col4:
-                    cols_removed = execution_log.get('columns_removed', 0)
-                    st.metric("Columns Removed", cols_removed)
+                    st.metric("Rows Removed", rows_removed)
                 
                 # Show execution output
                 if execution_log.get('output'):
@@ -1153,36 +824,18 @@ def execute_correction_with_feedback(data_corrector, logger):
             else:
                 st.error("❌ Data correction failed!")
                 
-                # Store error for feedback
-                error_msg = ""
-                if execution_log.get('errors'):
-                    for error in execution_log['errors']:
-                        error_msg += f"{error['type']}: {error['message']}\n"
-                        if 'traceback' in error:
-                            error_msg += f"Traceback:\n{error['traceback']}\n"
-                
-                st.session_state.correction_error = error_msg
-                
                 # Show errors
-                st.subheader("🚨 Errors Encountered")
-                for error in execution_log['errors']:
-                    st.error(f"**{error['type']}**: {error['message']}")
-                    
-                    # Show traceback in expander
-                    if 'traceback' in error:
-                        with st.expander("Show detailed error"):
-                            st.code(error['traceback'])
+                if execution_log.get('errors'):
+                    st.subheader("🚨 Errors")
+                    for error in execution_log['errors']:
+                        st.error(f"**{error['type']}**: {error['message']}")
+                        
+                        # Show traceback in expander
+                        if 'traceback' in error:
+                            with st.expander("Show detailed error"):
+                                st.code(error['traceback'])
                 
-                st.warning("💡 The error has been captured. Click 'Regenerate Code' to create a new version that addresses this error.")
-                
-                # Offer to regenerate with error context
-                if st.button("🔄 Regenerate with Error Fix", key="regen_with_error"):
-                    # Clear the code to trigger regeneration
-                    if 'correction_code' in st.session_state:
-                        del st.session_state.correction_code
-                    if 'strategy_summary' in st.session_state:
-                        del st.session_state.strategy_summary
-                    st.rerun()
+                st.info("💡 Try modifying the code or regenerating with different instructions.")
                     
         except Exception as e:
             st.error(f"❌ Error executing correction: {str(e)}")
@@ -1190,9 +843,6 @@ def execute_correction_with_feedback(data_corrector, logger):
                 "error": str(e), 
                 "traceback": traceback.format_exc()
             })
-            
-            # Store error for feedback
-            st.session_state.correction_error = f"Execution error: {str(e)}\n{traceback.format_exc()}"
 
 def handle_finalization(logger, llm_client):
     """Handle final pipeline generation"""
@@ -1231,15 +881,15 @@ def handle_finalization(logger, llm_client):
         
         with col1:
             original_shape = st.session_state.original_data.shape if hasattr(st.session_state.original_data, 'shape') else (0, 0)
-            st.metric("Original Rows", f"{original_shape[0]:,}")
+            st.metric("Original Rows", original_shape[0])
         
         with col2:
             final_shape = st.session_state.data.shape if hasattr(st.session_state.data, 'shape') else (0, 0)
-            st.metric("Final Rows", f"{final_shape[0]:,}")
+            st.metric("Final Rows", final_shape[0])
         
         with col3:
             rows_removed = original_shape[0] - final_shape[0]
-            st.metric("Total Rows Removed", f"{rows_removed:,}")
+            st.metric("Total Rows Removed", rows_removed)
         
         st.success("✅ Data cleaning process completed! Check the Downloads tab for files.")
 
@@ -1385,19 +1035,18 @@ def handle_downloads(logger):
                             schema_df = pd.DataFrame(st.session_state.schema).T
                             schema_df.to_excel(writer, sheet_name='Schema')
                         
-                        # Quality Report Summary
-                        if hasattr(st.session_state, 'quality_report'):
-                            summary_data = {
-                                'Metric': ['Quality Score', 'Missing %', 'Duplicates %', 'Outliers %'],
-                                'Value': [
-                                    st.session_state.quality_report.get('quality_score', 0),
-                                    st.session_state.quality_report['missing_values']['missing_percentage'],
-                                    st.session_state.quality_report['duplicates']['duplicate_percentage'],
-                                    st.session_state.quality_report['outliers'].get('outlier_percentage', 0)
-                                ]
-                            }
-                            summary_df = pd.DataFrame(summary_data)
-                            summary_df.to_excel(writer, sheet_name='Quality Summary', index=False)
+                        # Summary
+                        summary_data = {
+                            'Metric': ['Original Rows', 'Final Rows', 'Rows Removed', 'Columns'],
+                            'Value': [
+                                st.session_state.original_data.shape[0] if hasattr(st.session_state.original_data, 'shape') else 0,
+                                st.session_state.data.shape[0],
+                                (st.session_state.original_data.shape[0] if hasattr(st.session_state.original_data, 'shape') else 0) - st.session_state.data.shape[0],
+                                st.session_state.data.shape[1]
+                            ]
+                        }
+                        summary_df = pd.DataFrame(summary_data)
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
                     
                     excel_data = output.getvalue()
                     
