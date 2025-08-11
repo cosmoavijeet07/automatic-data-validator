@@ -164,21 +164,21 @@ def main():
     
     with tab1:
         # Check for state transitions first
-        if st.session_state.proceed_to_analysis:
-            st.session_state.current_step = 'analysis'
-            st.session_state.proceed_to_analysis = False
-            st.rerun()
+        # if st.session_state.proceed_to_analysis:
+        #     st.session_state.current_step = 'analysis'
+        #     st.session_state.proceed_to_analysis = False
+        #     st.rerun()
         
-        if st.session_state.proceed_to_correction:
-            st.session_state.current_step = 'correction'
-            st.session_state.proceed_to_correction = False
-            st.rerun()
+        # if st.session_state.proceed_to_correction:
+        #     st.session_state.current_step = 'correction'
+        #     st.session_state.proceed_to_correction = False
+        #     st.rerun()
         
-        if st.session_state.proceed_to_finalization:
-            st.error("Proceeding to finalization step")
-            st.session_state.current_step = 'finalization'
-            st.session_state.proceed_to_finalization = False
-            st.rerun()
+        # if st.session_state.proceed_to_finalization:
+        #     st.error("Proceeding to finalization step")
+        #     st.session_state.current_step = 'finalization'
+        #     st.session_state.proceed_to_finalization = False
+        #     st.rerun()
         
         # Handle current step
         if st.session_state.current_step == 'upload':
@@ -463,7 +463,7 @@ def handle_schema_management(logger, llm_client):
     
     with col2:
         if st.button("🔍 Proceed to Data Analysis", type="primary", key="schema_to_analysis_btn"):
-            st.session_state.proceed_to_analysis = True
+            st.session_state.current_step = 'analysis'
             st.rerun()
 
 def handle_data_analysis(logger, llm_client):
@@ -678,7 +678,7 @@ def handle_data_analysis(logger, llm_client):
     # Proceed button
     st.markdown("---")
     if st.button("🔧 Proceed to Data Correction", type="primary", key="analysis_to_correction_btn"):
-        st.session_state.proceed_to_correction = True
+        st.session_state.current_step = 'correction'
         st.rerun()
 from datetime import datetime
 
@@ -836,9 +836,10 @@ def execute_correction(data_corrector, logger):
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
-                    st.session_state.proceed_to_correction = False
+                    # st.error("Proceeding to finalization step")
+                    # st.session_state.proceed_to_correction = False
                     st.session_state.current_step = 'finalization'
-                    st.session_state.proceed_to_finalization = True
+                    # st.session_state.proceed_to_finalization = True
                     st.rerun()
             else:
                 st.error("❌ Data correction failed!")
