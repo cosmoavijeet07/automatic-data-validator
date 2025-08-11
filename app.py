@@ -800,6 +800,9 @@ def execute_correction(data_corrector, logger):
                 logger.log("Data correction executed", execution_log)
                 
                 st.success("🎉 Data correction completed successfully!")
+                st.write("DEBUG: Inside execute_correction")
+                st.write(f"Current step: {st.session_state.get('current_step')}")
+                st.write(f"Correction complete: {st.session_state.get('correction_complete', False)}")
                 
                 # Show before/after comparison
                 st.subheader("📊 Correction Results")
