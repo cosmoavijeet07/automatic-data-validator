@@ -49,14 +49,14 @@ def initialize_session():
         st.session_state.current_step = 'upload'
     
     # Add flags for button actions
-    if 'proceed_to_analysis' not in st.session_state:
-        st.session_state.proceed_to_analysis = False
+    # if 'proceed_to_analysis' not in st.session_state:
+    #     st.session_state.proceed_to_analysis = False
     
-    if 'proceed_to_correction' not in st.session_state:
-        st.session_state.proceed_to_correction = False
+    # if 'proceed_to_correction' not in st.session_state:
+    #     st.session_state.proceed_to_correction = False
     
-    if 'proceed_to_finalization' not in st.session_state:
-        st.session_state.proceed_to_finalization = False
+    # if 'proceed_to_finalization' not in st.session_state:
+    #     st.session_state.proceed_to_finalization = False
     
     # Initialize logger and session manager ONCE
     if 'logger' not in st.session_state:
@@ -179,8 +179,7 @@ def main():
         #     st.session_state.current_step = 'finalization'
         #     st.session_state.proceed_to_finalization = False
         #     st.rerun()
-        
-        # Handle current step
+        # Handle current step - simplified version
         if st.session_state.current_step == 'upload':
             handle_file_upload(logger, llm_client)
         elif st.session_state.current_step == 'schema':
@@ -190,7 +189,6 @@ def main():
         elif st.session_state.current_step == 'correction':
             handle_data_correction(logger, llm_client)
         elif st.session_state.current_step == 'finalization':
-            print("Finalization step reached")
             handle_finalization(logger, llm_client)
         else:
             st.error("Unknown step in the process. Please reset the session.")
@@ -836,11 +834,8 @@ def execute_correction(data_corrector, logger):
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
-                    # st.error("Proceeding to finalization step")
-                    # st.session_state.proceed_to_correction = False
                     st.session_state.current_step = 'finalization'
-                    # st.session_state.proceed_to_finalization = True
-                    st.rerun()
+                    st.experimental_rerun()
             else:
                 st.error("❌ Data correction failed!")
                 
