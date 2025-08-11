@@ -689,6 +689,8 @@ def handle_data_correction(logger, llm_client):
         return
     
     data_corrector = DataCorrector(llm_client)
+    st.write(f"DEBUG - Current State: {st.session_state.get('current_step')}")
+    st.write(f"DEBUG - Correction Complete: {st.session_state.get('correction_complete', False)}")
     
     # User input for additional instructions
     user_instructions = st.text_area(
