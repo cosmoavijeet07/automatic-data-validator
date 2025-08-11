@@ -9,7 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+import time
 # Import custom modules
 from config import MODELS, SUPPORTED_FILE_TYPES
 from file_handler import FileHandler
@@ -835,7 +835,8 @@ def execute_correction(data_corrector, logger):
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
                     st.session_state.current_step = 'finalization'
-                    st.experimental_rerun()
+                    time.sleep(0.1)
+                    st.rerun()
             else:
                 st.error("❌ Data correction failed!")
                 
