@@ -36,11 +36,11 @@ class DataCorrector:
             Tuple of (correction_code, strategy_summary)
         """
         try:
-            # Prepare context for code generation
+            # Prepare comprehensive context for code generation
             context = self._prepare_correction_context(data, schema, quality_report, user_instructions)
             
-            # Generate correction code
-            correction_code = self._generate_code_with_llm(context)
+            # Generate correction code with full context
+            correction_code = self._generate_code_with_llm(context, data)
             
             # Ensure the code has proper imports at the beginning
             if not correction_code.startswith('import'):
@@ -106,60 +106,144 @@ warnings.filterwarnings('ignore')"""
     
     def _prepare_correction_context(self, data: pd.DataFrame, schema: Dict[str, Any],
                                   quality_report: Dict[str, Any], user_instructions: str) -> Dict[str, Any]:
-        """Prepare context for code generation"""
-        context = {
-            'data_shape': data.shape,
+        """Prepare comprehensive context for code generation"""
+        
+        # Get complete data statistics
+        data_stats = {
+            'shape': data.shape,
             'columns': list(data.columns),
             'dtypes': {col: str(dtype) for col, dtype in data.dtypes.to_dict().items()},
-            'sample_data': data.head(3).to_dict(),
-            'schema': schema,
-            'quality_issues': {
-                'missing_values': quality_report['missing_values'],
-                'duplicates': quality_report['duplicates'],
-                'outliers': quality_report['outliers'],
-                'inconsistencies': quality_report.get('categorical_analysis', {}).get('inconsistencies', {}),
-                'data_consistency': quality_report.get('data_consistency', {})
-            },
-            'user_instructions': user_instructions,
+            'sample_data': data.head(5).to_dict('records'),
+            'null_counts': data.isnull().sum().to_dict(),
+            'unique_counts': {col: data[col].nunique() for col in data.columns},
+            'memory_usage': data.memory_usage(deep=True).to_dict()
+        }
+        
+        # Extract all quality issues
+        quality_issues = {
+            'missing_values': quality_report.get('missing_values', {}),
+            'duplicates': quality_report.get('duplicates', {}),
+            'outliers': quality_report.get('outliers', {}),
+            'categorical_analysis': quality_report.get('categorical_analysis', {}),
+            'numeric_analysis': quality_report.get('numeric_analysis', {}),
+            'data_consistency': quality_report.get('data_consistency', {}),
+            'data_types': quality_report.get('data_types', {}),
             'quality_score': quality_report.get('quality_score', 0)
+        }
+        
+        context = {
+            'data_stats': data_stats,
+            'schema': schema,
+            'quality_issues': quality_issues,
+            'user_instructions': user_instructions,
+            'enhanced_analysis': quality_report.get('enhanced_analysis', {}),
+            'critical_issues': self._identify_critical_issues(quality_report)
         }
         
         return context
     
-    def _generate_code_with_llm(self, context: Dict[str, Any]) -> str:
-        """Generate correction code using LLM"""
+    def _identify_critical_issues(self, quality_report: Dict[str, Any]) -> List[str]:
+        """Identify critical issues that must be addressed"""
+        critical_issues = []
+        
+        # Check missing values
+        missing_info = quality_report.get('missing_values', {})
+        if missing_info.get('problematic_columns'):
+            critical_issues.append(f"Columns with >50% missing: {', '.join(missing_info['problematic_columns'])}")
+        
+        # Check duplicates
+        dup_info = quality_report.get('duplicates', {})
+        if dup_info.get('is_problematic'):
+            critical_issues.append(f"High duplicate rate: {dup_info['duplicate_percentage']:.1f}%")
+        
+        # Check outliers
+        outlier_info = quality_report.get('outliers', {})
+        if outlier_info.get('outlier_percentage', 0) > 10:
+            critical_issues.append(f"High outlier rate: {outlier_info['outlier_percentage']:.1f}%")
+        
+        # Check data type issues
+        type_info = quality_report.get('data_types', {})
+        if type_info.get('type_suggestions'):
+            critical_issues.append(f"Data type optimization needed for {len(type_info['type_suggestions'])} columns")
+        
+        return critical_issues
+    
+    def _generate_code_with_llm(self, context: Dict[str, Any], data: pd.DataFrame) -> str:
+        """Generate correction code using LLM with comprehensive context"""
+        
+        # Create detailed prompt with all context
         prompt = f"""
         {CORRECTION_CODE_PROMPT}
         
-        Data Context:
-        - Shape: {context['data_shape']}
-        - Columns: {context['columns']}
-        - Data types: {context['dtypes']}
+        COMPLETE DATA CONTEXT:
+        ===================
         
-        Sample Data:
-        {json.dumps(context['sample_data'], indent=2, default=str)}
+        Data Statistics:
+        - Shape: {context['data_stats']['shape']}
+        - Columns: {context['data_stats']['columns']}
+        - Data types: {json.dumps(context['data_stats']['dtypes'], indent=2)}
+        - Null counts per column: {json.dumps(context['data_stats']['null_counts'], indent=2)}
+        - Unique values per column: {json.dumps(context['data_stats']['unique_counts'], indent=2)}
         
-        Quality Issues:
-        {json.dumps(context['quality_issues'], indent=2, default=str)}
+        Sample Data (first 5 rows):
+        {json.dumps(context['data_stats']['sample_data'], indent=2, default=str)}
         
-        User Instructions: {context['user_instructions']}
+        COMPLETE SCHEMA INFORMATION:
+        ===========================
+        {json.dumps(context['schema'], indent=2, default=str)}
         
+        COMPLETE QUALITY ANALYSIS:
+        =========================
+        Missing Values:
+        {json.dumps(context['quality_issues']['missing_values'], indent=2, default=str)}
+        
+        Duplicates:
+        {json.dumps(context['quality_issues']['duplicates'], indent=2, default=str)}
+        
+        Outliers:
+        {json.dumps(context['quality_issues']['outliers'], indent=2, default=str)}
+        
+        Categorical Analysis:
+        {json.dumps(context['quality_issues']['categorical_analysis'], indent=2, default=str)}
+        
+        Numeric Analysis:
+        {json.dumps(context['quality_issues']['numeric_analysis'], indent=2, default=str)}
+        
+        Data Type Issues:
+        {json.dumps(context['quality_issues']['data_types'], indent=2, default=str)}
+        
+        CRITICAL ISSUES TO ADDRESS:
+        ==========================
+        {chr(10).join(['- ' + issue for issue in context['critical_issues']])}
+        
+        Quality Score: {context['quality_issues']['quality_score']}/100
+        
+        User Instructions: {context['user_instructions'] if context['user_instructions'] else 'No specific instructions provided'}
+        
+        REQUIREMENTS:
+        ============
         Generate a complete Python function called 'clean_data' that:
         1. Takes a DataFrame as input parameter 'df'
         2. Returns the cleaned DataFrame
-        3. Handles all identified issues systematically
-        4. Includes proper error handling and logging
+        3. Addresses ALL identified quality issues systematically
+        4. Includes detailed logging of operations performed
         5. Uses only pandas, numpy, datetime, and re libraries
+        6. Handles edge cases and errors gracefully
+        7. Preserves data integrity while cleaning
         
-        IMPORTANT: Include all necessary imports at the beginning of the code.
-        Start with:
-        import pandas as pd
-        import numpy as np
-        import datetime
-        import re
-        import warnings
+        The function should:
+        - Handle missing values based on column type and distribution
+        - Remove or handle duplicates appropriately
+        - Fix data type issues
+        - Handle outliers using appropriate methods
+        - Standardize categorical values
+        - Log each operation with before/after statistics
         
-        The function should be production-ready and well-documented.
+        IMPORTANT: 
+        - Include all necessary imports at the beginning
+        - Add detailed comments explaining each cleaning step
+        - Print progress messages for each major operation
+        - The function must be production-ready and well-documented
         """
         
         code = self.llm_client.generate_code(prompt)
@@ -210,6 +294,7 @@ def clean_data(df):
         final_shape = cleaned_df.shape
         print(f"Data cleaning completed. Final shape: {{final_shape}}")
         print(f"Rows removed: {{original_shape[0] - final_shape[0]}}")
+        print(f"Columns removed: {{original_shape[1] - final_shape[1]}}")
         
         return cleaned_df
         
@@ -284,12 +369,18 @@ def clean_data(df):
     def _generate_strategy_summary(self, code: str, context: Dict[str, Any]) -> str:
         """Generate human-readable strategy summary"""
         try:
-            context_str = f"Data has {context['data_shape'][0]} rows and {context['data_shape'][1]} columns with quality score {context['quality_score']}"
+            # Create comprehensive context string
+            context_str = f"""
+            Data has {context['data_stats']['shape'][0]} rows and {context['data_stats']['shape'][1]} columns.
+            Quality score: {context['quality_issues']['quality_score']}/100.
+            Critical issues: {', '.join(context['critical_issues']) if context['critical_issues'] else 'None identified'}.
+            """
+            
             summary = self.llm_client.summarize_strategy(code, context_str)
             return summary
         except Exception as e:
             # Fallback summary
-            return f"Data cleaning strategy addresses missing values, duplicates, and data quality issues. Quality score: {context['quality_score']}/100"
+            return f"Data cleaning strategy addresses {len(context['critical_issues'])} critical issues. Quality score: {context['quality_issues']['quality_score']}/100"
     
     def execute_correction_code(self, data: pd.DataFrame, code: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
@@ -333,7 +424,7 @@ def clean_data(df):
                 'datetime': __import__('datetime'),
                 're': re,
                 'warnings': __import__('warnings'),
-                'print': print,  # Ensure print is available
+                'print': print,
                 'len': len,
                 'str': str,
                 'int': int,
@@ -430,9 +521,12 @@ def clean_data(df):
             return data, execution_log
     
     def _generate_fallback_correction_code(self, data: pd.DataFrame, quality_report: Dict[str, Any]) -> str:
-        """Generate a basic fallback correction code when LLM fails"""
-        missing_percentage = quality_report.get('missing_values', {}).get('missing_percentage', 0)
-        has_duplicates = quality_report.get('duplicates', {}).get('total_duplicates', 0) > 0
+        """Generate a comprehensive fallback correction code when LLM fails"""
+        
+        missing_info = quality_report.get('missing_values', {})
+        dup_info = quality_report.get('duplicates', {})
+        outlier_info = quality_report.get('outliers', {})
+        cat_info = quality_report.get('categorical_analysis', {})
         
         code = """import pandas as pd
 import numpy as np
@@ -440,40 +534,106 @@ import warnings
 warnings.filterwarnings('ignore')
 
 def clean_data(df):
-    \"\"\"Basic data cleaning function\"\"\"
+    \"\"\"Comprehensive data cleaning function\"\"\"
     try:
         print(f"Starting data cleaning. Original shape: {df.shape}")
+        print("="*50)
         
         # Make a copy
         cleaned_df = df.copy()
         
-        # Remove duplicates
-        if cleaned_df.duplicated().sum() > 0:
+        # 1. Remove duplicates
+        print("\\nStep 1: Removing duplicates...")
+        duplicates_before = cleaned_df.duplicated().sum()
+        if duplicates_before > 0:
             cleaned_df = cleaned_df.drop_duplicates()
-            print(f"Removed {df.shape[0] - cleaned_df.shape[0]} duplicate rows")
+            print(f"  Removed {duplicates_before} duplicate rows")
+        else:
+            print("  No duplicates found")
         
-        # Handle missing values
+        # 2. Handle missing values
+        print("\\nStep 2: Handling missing values...")
         for column in cleaned_df.columns:
-            if cleaned_df[column].isnull().sum() > 0:
+            null_count = cleaned_df[column].isnull().sum()
+            if null_count > 0:
+                null_percentage = (null_count / len(cleaned_df)) * 100
+                
+                # Drop column if >90% missing
+                if null_percentage > 90:
+                    cleaned_df = cleaned_df.drop(columns=[column])
+                    print(f"  Dropped column '{column}' (>{null_percentage:.1f}% missing)")
+                    continue
+                
+                # Handle based on data type
                 if cleaned_df[column].dtype in ['float64', 'int64']:
-                    # Fill numeric columns with median
-                    cleaned_df[column].fillna(cleaned_df[column].median(), inplace=True)
-                else:
-                    # Fill categorical columns with mode or 'Unknown'
+                    # Numeric columns - use median for <30% missing, mean otherwise
+                    if null_percentage < 30:
+                        fill_value = cleaned_df[column].median()
+                        cleaned_df[column].fillna(fill_value, inplace=True)
+                        print(f"  Filled {null_count} missing values in '{column}' with median: {fill_value:.2f}")
+                    else:
+                        fill_value = cleaned_df[column].mean()
+                        cleaned_df[column].fillna(fill_value, inplace=True)
+                        print(f"  Filled {null_count} missing values in '{column}' with mean: {fill_value:.2f}")
+                elif cleaned_df[column].dtype == 'object':
+                    # Categorical columns - use mode or 'Unknown'
                     if not cleaned_df[column].mode().empty:
-                        cleaned_df[column].fillna(cleaned_df[column].mode()[0], inplace=True)
+                        fill_value = cleaned_df[column].mode()[0]
+                        cleaned_df[column].fillna(fill_value, inplace=True)
+                        print(f"  Filled {null_count} missing values in '{column}' with mode: '{fill_value}'")
                     else:
                         cleaned_df[column].fillna('Unknown', inplace=True)
+                        print(f"  Filled {null_count} missing values in '{column}' with 'Unknown'")
         
-        # Remove columns with too many missing values (>90%)
-        threshold = 0.9
+        # 3. Handle outliers in numeric columns
+        print("\\nStep 3: Handling outliers...")
+        numeric_columns = cleaned_df.select_dtypes(include=[np.number]).columns
+        for column in numeric_columns:
+            Q1 = cleaned_df[column].quantile(0.25)
+            Q3 = cleaned_df[column].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            
+            outliers = cleaned_df[(cleaned_df[column] < lower_bound) | (cleaned_df[column] > upper_bound)]
+            if len(outliers) > 0:
+                # Cap outliers instead of removing
+                cleaned_df[column] = cleaned_df[column].clip(lower_bound, upper_bound)
+                print(f"  Capped {len(outliers)} outliers in '{column}'")
+        
+        # 4. Standardize categorical values
+        print("\\nStep 4: Standardizing categorical values...")
+        object_columns = cleaned_df.select_dtypes(include=['object']).columns
+        for column in object_columns:
+            # Strip whitespace and convert to title case
+            cleaned_df[column] = cleaned_df[column].astype(str).str.strip().str.title()
+            print(f"  Standardized values in '{column}'")
+        
+        # 5. Convert data types where appropriate
+        print("\\nStep 5: Optimizing data types...")
         for column in cleaned_df.columns:
-            if (df[column].isnull().sum() / len(df)) > threshold:
-                cleaned_df = cleaned_df.drop(columns=[column])
-                print(f"Dropped column '{column}' due to excessive missing values")
+            if cleaned_df[column].dtype == 'object':
+                # Try to convert to datetime
+                try:
+                    cleaned_df[column] = pd.to_datetime(cleaned_df[column], errors='coerce')
+                    if cleaned_df[column].notna().sum() > 0:
+                        print(f"  Converted '{column}' to datetime")
+                    else:
+                        cleaned_df[column] = cleaned_df[column].astype('object')
+                except:
+                    pass
+                
+                # Check if should be categorical
+                if cleaned_df[column].dtype == 'object':
+                    unique_ratio = cleaned_df[column].nunique() / len(cleaned_df)
+                    if unique_ratio < 0.05:  # Less than 5% unique values
+                        cleaned_df[column] = cleaned_df[column].astype('category')
+                        print(f"  Converted '{column}' to categorical")
         
+        print("\\n" + "="*50)
         print(f"Data cleaning completed. Final shape: {cleaned_df.shape}")
         print(f"Rows removed: {df.shape[0] - cleaned_df.shape[0]}")
+        print(f"Columns removed: {df.shape[1] - cleaned_df.shape[1]}")
         
         return cleaned_df
         

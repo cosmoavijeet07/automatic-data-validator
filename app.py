@@ -676,6 +676,7 @@ def handle_data_analysis(logger, llm_client):
     if st.button("🔧 Proceed to Data Correction", type="primary", key="analysis_to_correction_btn"):
         st.session_state.proceed_to_correction = True
         st.rerun()
+from datetime import datetime
 
 def handle_data_correction(logger, llm_client):
     """Handle data correction"""
@@ -791,6 +792,7 @@ def execute_correction(data_corrector, logger):
             
             if execution_log['success']:
                 st.session_state.data = corrected_data
+                st.session_state.correction_executed = True  # Add flag for successful execution
                 logger.log("Data correction executed", execution_log)
                 
                 st.success("🎉 Data correction completed successfully!")
@@ -816,10 +818,21 @@ def execute_correction(data_corrector, logger):
                             if line.strip():
                                 st.text(line)
                 
+                # Display the updated dataset
+                st.subheader("📊 Updated Dataset Preview")
+                st.dataframe(st.session_state.data.head(10), use_container_width=True)
+                
+                # Show data info
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"**Shape:** {st.session_state.data.shape}")
+                with col2:
+                    st.info(f"**Memory:** {st.session_state.data.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB")
+                
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
-                    st.session_state.proceed_to_finalization = True
+                    st.session_state.current_step = 'finalization'
                     st.rerun()
             else:
                 st.error("❌ Data correction failed!")
@@ -848,50 +861,244 @@ def handle_finalization(logger, llm_client):
     """Handle final pipeline generation"""
     st.header("🎯 Finalization")
     
+    if st.session_state.data is None:
+        st.warning("No data available. Please complete the previous steps.")
+        return
+    
     pipeline_generator = PipelineGenerator(llm_client)
     
-    if st.button("Generate Final Pipeline", type="primary"):
-        with st.spinner("Generating pipeline..."):
+    # Generate pipeline button
+    if st.button("🚀 Generate Final Pipeline", type="primary", key="generate_pipeline_btn"):
+        with st.spinner("Generating complete pipeline..."):
             try:
+                # Get all logs for pipeline generation
+                all_logs = logger.get_logs()
+                
+                # Generate the pipeline
                 pipeline_code = pipeline_generator.generate_pipeline(
-                    logger.get_logs(),
+                    all_logs,
                     st.session_state.schema,
                     getattr(st.session_state, 'correction_code', '')
                 )
                 
                 st.session_state.pipeline_code = pipeline_code
+                st.session_state.pipeline_generated = True
                 logger.log("Pipeline generated", {"pipeline_length": len(pipeline_code)})
                 
-                st.success("Pipeline generated successfully!")
+                st.success("✅ Pipeline generated successfully!")
+                st.rerun()
                 
             except Exception as e:
                 st.error(f"Error generating pipeline: {str(e)}")
+                logger.log("Pipeline generation error", {"error": str(e)})
                 return
     
-    if hasattr(st.session_state, 'pipeline_code'):
-        st.subheader("Generated Pipeline")
-        st.code(st.session_state.pipeline_code, language='python')
+    # Display generated pipeline and downloads
+    if hasattr(st.session_state, 'pipeline_code') and st.session_state.pipeline_code:
+        st.subheader("📝 Generated Pipeline")
+        
+        # Show pipeline code in expander
+        with st.expander("View Pipeline Code", expanded=False):
+            st.code(st.session_state.pipeline_code, language='python')
         
         # Final data preview
-        st.subheader("Final Cleaned Data")
-        st.dataframe(st.session_state.data.head(), use_container_width=True)
+        st.subheader("✨ Final Cleaned Data")
+        
+        # Data preview
+        st.dataframe(st.session_state.data.head(10), use_container_width=True)
         
         # Summary metrics
-        col1, col2, col3 = st.columns(3)
+        st.subheader("📊 Cleaning Summary")
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            original_shape = st.session_state.original_data.shape if hasattr(st.session_state.original_data, 'shape') else (0, 0)
-            st.metric("Original Rows", original_shape[0])
+            original_shape = st.session_state.original_data.shape if hasattr(st.session_state, 'original_data') and hasattr(st.session_state.original_data, 'shape') else (0, 0)
+            st.metric("Original Rows", f"{original_shape[0]:,}")
         
         with col2:
             final_shape = st.session_state.data.shape if hasattr(st.session_state.data, 'shape') else (0, 0)
-            st.metric("Final Rows", final_shape[0])
+            st.metric("Final Rows", f"{final_shape[0]:,}")
         
         with col3:
             rows_removed = original_shape[0] - final_shape[0]
-            st.metric("Total Rows Removed", rows_removed)
+            st.metric("Rows Removed", f"{rows_removed:,}")
         
-        st.success("✅ Data cleaning process completed! Check the Downloads tab for files.")
+        with col4:
+            reduction_pct = (rows_removed / original_shape[0] * 100) if original_shape[0] > 0 else 0
+            st.metric("Reduction %", f"{reduction_pct:.1f}%")
+        
+        # Downloads section
+        st.markdown("---")
+        st.subheader("📥 Download Files")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Download cleaned dataset
+            st.markdown("### 📊 Cleaned Dataset")
+            csv_data = st.session_state.data.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv_data,
+                file_name=f"cleaned_data_{st.session_state.session_id[:8]}.csv",
+                mime="text/csv",
+                help="Download the final cleaned dataset",
+                type="primary"
+            )
+        
+        with col2:
+            # Download pipeline script
+            st.markdown("### 🐍 Pipeline Script")
+            st.download_button(
+                label="Download Pipeline (.py)",
+                data=st.session_state.pipeline_code,
+                file_name=f"data_pipeline_{st.session_state.session_id[:8]}.py",
+                mime="text/plain",
+                help="Reusable Python pipeline script",
+                type="primary"
+            )
+        
+        with col3:
+            # Download complete log file
+            st.markdown("### 📋 Session Logs")
+            log_json = logger.export_logs(format="json")
+            st.download_button(
+                label="Download Logs (JSON)",
+                data=log_json,
+                file_name=f"cleaning_log_{st.session_state.session_id[:8]}.json",
+                mime="application/json",
+                help="Complete session logs with all operations",
+                type="primary"
+            )
+        
+        # Additional export options
+        st.markdown("---")
+        st.subheader("📑 Additional Export Options")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Generate Excel report
+            if st.button("📑 Generate Excel Report", key="gen_excel_final"):
+                with st.spinner("Generating comprehensive Excel report..."):
+                    try:
+                        from io import BytesIO
+                        output = BytesIO()
+                        
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            # Cleaned data
+                            st.session_state.data.to_excel(writer, sheet_name='Cleaned Data', index=False)
+                            
+                            # Original data (if available)
+                            if hasattr(st.session_state, 'original_data') and isinstance(st.session_state.original_data, pd.DataFrame):
+                                st.session_state.original_data.to_excel(writer, sheet_name='Original Data', index=False)
+                            
+                            # Schema
+                            if st.session_state.schema:
+                                schema_df = pd.DataFrame(st.session_state.schema).T
+                                schema_df.to_excel(writer, sheet_name='Schema')
+                            
+                            # Quality Report Summary
+                            if hasattr(st.session_state, 'quality_report'):
+                                quality_summary = pd.DataFrame({
+                                    'Metric': ['Quality Score', 'Missing %', 'Duplicates %', 'Outliers %'],
+                                    'Value': [
+                                        st.session_state.quality_report.get('quality_score', 0),
+                                        st.session_state.quality_report.get('missing_values', {}).get('missing_percentage', 0),
+                                        st.session_state.quality_report.get('duplicates', {}).get('duplicate_percentage', 0),
+                                        st.session_state.quality_report.get('outliers', {}).get('outlier_percentage', 0)
+                                    ]
+                                })
+                                quality_summary.to_excel(writer, sheet_name='Quality Report', index=False)
+                            
+                            # Processing Summary
+                            summary_data = {
+                                'Metric': ['Original Rows', 'Final Rows', 'Rows Removed', 'Original Columns', 'Final Columns', 'Processing Steps'],
+                                'Value': [
+                                    st.session_state.original_data.shape[0] if hasattr(st.session_state, 'original_data') and hasattr(st.session_state.original_data, 'shape') else 0,
+                                    st.session_state.data.shape[0],
+                                    (st.session_state.original_data.shape[0] if hasattr(st.session_state, 'original_data') and hasattr(st.session_state.original_data, 'shape') else 0) - st.session_state.data.shape[0],
+                                    st.session_state.original_data.shape[1] if hasattr(st.session_state, 'original_data') and hasattr(st.session_state.original_data, 'shape') else 0,
+                                    st.session_state.data.shape[1],
+                                    len(logger.get_logs())
+                                ]
+                            }
+                            summary_df = pd.DataFrame(summary_data)
+                            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                        
+                        excel_data = output.getvalue()
+                        
+                        st.download_button(
+                            label="📑 Download Excel Report",
+                            data=excel_data,
+                            file_name=f"complete_report_{st.session_state.session_id[:8]}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        st.success("Excel report generated successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"Error generating Excel report: {str(e)}")
+        
+        with col2:
+            # Generate text report
+            if st.button("📄 Generate Text Report", key="gen_text_final"):
+                try:
+                    text_report = f"""
+DATA CLEANING REPORT
+====================
+Session ID: {st.session_state.session_id}
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+SUMMARY
+-------
+Original Data Shape: {st.session_state.original_data.shape if hasattr(st.session_state, 'original_data') and hasattr(st.session_state.original_data, 'shape') else 'N/A'}
+Final Data Shape: {st.session_state.data.shape}
+Rows Removed: {rows_removed:,}
+Reduction Percentage: {reduction_pct:.1f}%
+
+QUALITY METRICS
+--------------
+Initial Quality Score: {st.session_state.quality_report.get('quality_score', 'N/A')}/100
+Missing Values: {st.session_state.quality_report.get('missing_values', {}).get('missing_percentage', 0):.1f}%
+Duplicates: {st.session_state.quality_report.get('duplicates', {}).get('duplicate_percentage', 0):.1f}%
+Outliers: {st.session_state.quality_report.get('outliers', {}).get('outlier_percentage', 0):.1f}%
+
+PROCESSING STEPS
+---------------
+1. File Upload and Validation
+2. Schema Detection and Optimization
+3. Data Quality Analysis
+4. Data Correction and Cleaning
+5. Pipeline Generation
+
+LOGS
+----
+{logger.export_logs(format="txt")}
+"""
+                    
+                    st.download_button(
+                        label="📄 Download Text Report",
+                        data=text_report,
+                        file_name=f"cleaning_report_{st.session_state.session_id[:8]}.txt",
+                        mime="text/plain"
+                    )
+                    st.success("Text report generated successfully!")
+                    
+                except Exception as e:
+                    st.error(f"Error generating text report: {str(e)}")
+        
+        # Success message
+        st.markdown("---")
+        st.success("🎉 **Data cleaning process completed successfully!**")
+        st.info("📌 All files are ready for download. The pipeline script can be used to replicate this cleaning process on new data.")
+        
+        # Option to start new session
+        if st.button("🔄 Start New Session", key="new_session_btn"):
+            reset_session_for_new_file()
+            st.rerun()
+    
+    else:
+        st.info("👆 Click 'Generate Final Pipeline' to complete the data cleaning process and enable downloads.")
 
 def display_logs(logger):
     """Display session logs"""
