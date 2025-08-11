@@ -798,6 +798,7 @@ def execute_correction(data_corrector, logger):
                 st.session_state.data = corrected_data
                 st.session_state.correction_executed = True  # Add flag for successful execution
                 logger.log("Data correction executed", execution_log)
+                st.rerun()
                 
                 st.success("🎉 Data correction completed successfully!")
                 st.write("DEBUG: Inside execute_correction")
@@ -824,6 +825,7 @@ def execute_correction(data_corrector, logger):
                         for line in execution_log['output']:
                             if line.strip():
                                 st.text(line)
+                    
                 
                 # Display the updated dataset
                 st.subheader("📊 Updated Dataset Preview")
@@ -839,6 +841,7 @@ def execute_correction(data_corrector, logger):
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
+                    del st.session_state.correction_complete
                     st.session_state.current_step = 'finalization'
                     st.session_state.correction_complete = False
                     time.sleep(0.1)
