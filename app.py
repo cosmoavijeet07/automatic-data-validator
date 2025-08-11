@@ -681,86 +681,120 @@ def handle_data_analysis(logger, llm_client):
 from datetime import datetime
 
 def handle_data_correction(logger, llm_client):
-    """Handle data correction"""
+    """Handle the complete data correction workflow with proper state transitions"""
     st.header("🔧 Data Correction")
     
+    # Initialize session state variables if they don't exist
+    if 'correction_state' not in st.session_state:
+        st.session_state.correction_state = {
+            'generated': False,
+            'executed': False,
+            'show_proceed': False,
+            'execution_log': None
+        }
+    
+    # Debug display (remove in production)
+    st.sidebar.write("Debug - Correction State:", st.session_state.correction_state)
+    
     if st.session_state.data is None:
-        st.warning("No data available.")
+        st.warning("No data available. Please complete previous steps first.")
         return
     
     data_corrector = DataCorrector(llm_client)
-    st.write(f"DEBUG - Current State: {st.session_state.get('current_step')}")
-    st.write(f"DEBUG - Correction Complete: {st.session_state.get('correction_complete', False)}")
     
-    # User input for additional instructions
-    user_instructions = st.text_area(
-        "Additional correction instructions (optional)",
-        placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels'",
-        key="correction_instructions"
-    )
-    
-    if st.button("Generate Correction Code", key="generate_correction_button"):
-        if not llm_client or not llm_client.client:
-            st.error("LLM client not available. Please check your OpenAI API key.")
-            return
+    # Section 1: User Instructions and Code Generation
+    with st.expander("⚙️ Correction Setup", expanded=not st.session_state.correction_state['generated']):
+        user_instructions = st.text_area(
+            "Additional correction instructions (optional)",
+            placeholder="e.g., 'Remove outliers beyond 3 standard deviations, standardize categorical labels'",
+            key="correction_instructions"
+        )
+        
+        if st.button("Generate Correction Code", 
+                    disabled=st.session_state.correction_state['generated'],
+                    key="generate_correction_button"):
+            with st.spinner("Generating correction strategy..."):
+                try:
+                    correction_code, strategy_summary = data_corrector.generate_correction_code(
+                        st.session_state.data,
+                        st.session_state.schema,
+                        st.session_state.quality_report,
+                        user_instructions
+                    )
+                    
+                    st.session_state.correction_code = correction_code
+                    st.session_state.strategy_summary = strategy_summary
+                    st.session_state.correction_state['generated'] = True
+                    
+                    logger.log("Correction code generated", {
+                        "strategy_summary": strategy_summary
+                    })
+                    
+                    st.success("Correction code generated successfully!")
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error generating correction code: {str(e)}")
+                    logger.log("Correction code generation error", {"error": str(e)})
+
+    # Section 2: Display Generated Code
+    if st.session_state.correction_state['generated']:
+        with st.expander("📋 Generated Correction Code", expanded=True):
+            st.subheader("Cleaning Strategy")
+            st.info(st.session_state.strategy_summary)
             
-        with st.spinner("Generating correction strategy..."):
-            try:
-                correction_code, strategy_summary = data_corrector.generate_correction_code(
-                    st.session_state.data,
-                    st.session_state.schema,
-                    st.session_state.quality_report,
-                    user_instructions
-                )
-                
-                st.session_state.correction_code = correction_code
-                st.session_state.strategy_summary = strategy_summary
-                
-                logger.log("Correction code generated", {
-                    "strategy_summary": strategy_summary
-                })
-                
-                st.success("Correction code generated successfully!")
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"Error generating correction code: {str(e)}")
-                logger.log("Correction code generation error", {"error": str(e)})
-                return
-    
-    # Display generated code and strategy
-    if hasattr(st.session_state, 'correction_code') and st.session_state.correction_code:
-        st.subheader("📋 Correction Strategy")
-        st.info(st.session_state.strategy_summary)
+            st.subheader("Implementation Code")
+            st.code(st.session_state.correction_code, language='python')
+            
+            # Action buttons in columns
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                execute_disabled = st.session_state.correction_state['executed']
+                if st.button("✅ Execute Correction", 
+                           disabled=execute_disabled,
+                           type="primary",
+                           key="execute_correction_button"):
+                    with st.spinner("Executing correction..."):
+                        try:
+                            corrected_data, execution_log = data_corrector.execute_correction_code(
+                                st.session_state.data,
+                                st.session_state.correction_code
+                            )
+                            
+                            st.session_state.data = corrected_data
+                            st.session_state.correction_state.update({
+                                'executed': True,
+                                'show_proceed': True,
+                                'execution_log': execution_log
+                            })
+                            
+                            logger.log("Data correction executed", execution_log)
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error executing correction: {str(e)}")
+                            logger.log("Correction execution error", {
+                                "error": str(e), 
+                                "traceback": traceback.format_exc()
+                            })
+            
+            with col2:
+                if st.button("✏️ Modify Code", key="modify_code_button"):
+                    st.session_state.show_code_editor = True
+                    st.rerun()
+            
+            with col3:
+                if st.button("🔄 Regenerate Code", key="regenerate_code_button"):
+                    st.session_state.correction_state['generated'] = False
+                    if 'correction_code' in st.session_state:
+                        del st.session_state.correction_code
+                    if 'strategy_summary' in st.session_state:
+                        del st.session_state.strategy_summary
+                    st.rerun()
         
-        st.subheader("🔧 Generated Correction Code")
-        st.code(st.session_state.correction_code, language='python')
-        
-        # Action buttons
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("✅ Execute Correction", type="primary", key="execute_correction_button"):
-                execute_correction(data_corrector, logger)
-        
-        with col2:
-            if st.button("✏️ Modify Code", key="modify_code_button"):
-                st.session_state.show_code_editor = True
-                st.rerun()
-        
-        with col3:
-            if st.button("🔄 Regenerate Code", key="regenerate_code_button"):
-                # Clear existing code to trigger regeneration
-                if 'correction_code' in st.session_state:
-                    del st.session_state.correction_code
-                if 'strategy_summary' in st.session_state:
-                    del st.session_state.strategy_summary
-                st.rerun()
-        
-        # Code editor (if user wants to modify)
+        # Code editor (if modification requested)
         if hasattr(st.session_state, 'show_code_editor') and st.session_state.show_code_editor:
-            st.subheader("✏️ Modify Correction Code")
-            
             modified_code = st.text_area(
                 "Edit the correction code:",
                 value=st.session_state.correction_code,
@@ -769,21 +803,61 @@ def handle_data_correction(logger, llm_client):
             )
             
             col_save, col_cancel = st.columns(2)
-            
             with col_save:
-                if st.button("💾 Save Changes", key="save_modified_code"):
+                if st.button("💾 Save Changes"):
                     st.session_state.correction_code = modified_code
                     st.session_state.show_code_editor = False
                     st.success("Code updated successfully!")
                     st.rerun()
-            
             with col_cancel:
-                if st.button("❌ Cancel", key="cancel_code_edit"):
+                if st.button("❌ Cancel"):
                     st.session_state.show_code_editor = False
                     st.rerun()
-    
-    else:
-        st.info("👆 Click 'Generate Correction Code' to create a data cleaning strategy.")
+
+    # Section 3: Show Results and Proceed Button
+    if st.session_state.correction_state['executed']:
+        st.markdown("---")
+        st.subheader("📊 Correction Results")
+        
+        # Display execution results
+        execution_log = st.session_state.correction_state['execution_log']
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Original Rows", execution_log['original_shape'][0])
+        
+        with col2:
+            st.metric("Final Rows", execution_log['final_shape'][0])
+        
+        with col3:
+            rows_removed = execution_log.get('rows_removed', 0)
+            st.metric("Rows Removed", rows_removed)
+        
+        # Show execution output if available
+        if execution_log.get('output'):
+            with st.expander("📋 Execution Log"):
+                for line in execution_log['output']:
+                    if line.strip():
+                        st.text(line)
+        
+        # Display updated dataset preview
+        st.subheader("🧹 Cleaned Data Preview")
+        st.dataframe(st.session_state.data.head(10), use_container_width=True)
+        
+        # Only show proceed button when execution is complete
+        if st.session_state.correction_state['show_proceed']:
+            st.markdown("---")
+            if st.button("🎯 Proceed to Finalization", 
+                        type="primary", 
+                        key="proceed_to_final_btn"):
+                # Clear correction state
+                del st.session_state.correction_state
+                if 'correction_code' in st.session_state:
+                    del st.session_state.correction_code
+                
+                # Move to next step
+                st.session_state.current_step = 'finalization'
+                st.rerun()
 
 def execute_correction(data_corrector, logger):
     """Execute the correction code"""
@@ -798,7 +872,6 @@ def execute_correction(data_corrector, logger):
                 st.session_state.data = corrected_data
                 st.session_state.correction_executed = True  # Add flag for successful execution
                 logger.log("Data correction executed", execution_log)
-                st.rerun()
                 
                 st.success("🎉 Data correction completed successfully!")
                 st.write("DEBUG: Inside execute_correction")
