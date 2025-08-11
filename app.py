@@ -175,7 +175,7 @@ def main():
             st.rerun()
         
         if st.session_state.proceed_to_finalization:
-            print("Proceeding to finalization step")
+            st.error("Proceeding to finalization step")
             st.session_state.current_step = 'finalization'
             st.session_state.proceed_to_finalization = False
             st.rerun()
@@ -192,6 +192,8 @@ def main():
         elif st.session_state.current_step == 'finalization':
             print("Finalization step reached")
             handle_finalization(logger, llm_client)
+        else:
+            st.error("Unknown step in the process. Please reset the session.")
     
     with tab2:
         display_logs(logger)
