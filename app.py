@@ -835,6 +835,7 @@ def execute_correction(data_corrector, logger):
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
                     st.session_state.current_step = 'finalization'
+                    st.session_state.correction_complete = False
                     time.sleep(0.1)
                     st.rerun()
             else:
