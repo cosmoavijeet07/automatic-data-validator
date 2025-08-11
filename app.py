@@ -832,7 +832,7 @@ def execute_correction(data_corrector, logger):
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
-                    st.session_state.current_step = 'finalization'
+                    st.session_state.proceed_to_finalization = True
                     st.rerun()
             else:
                 st.error("❌ Data correction failed!")
