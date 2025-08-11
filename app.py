@@ -727,7 +727,7 @@ def handle_data_correction(logger, llm_client):
                 return
     
     # Display generated code and strategy
-    if hasattr(st.session_state, 'correction_code') and st.session_state.correction_code and st.session_state.current_step == 'correction':
+    if hasattr(st.session_state, 'correction_code') and st.session_state.correction_code:
         st.subheader("📋 Correction Strategy")
         st.info(st.session_state.strategy_summary)
         
@@ -834,7 +834,7 @@ def execute_correction(data_corrector, logger):
                 # Proceed button
                 st.markdown("---")
                 if st.button("🎯 Proceed to Finalization", type="primary", key="correction_to_finalization_btn"):
-                    st.session_state.correction_executed = False
+                    st.session_state.proceed_to_correction = False
                     st.session_state.current_step = 'finalization'
                     st.session_state.proceed_to_finalization = True
                     st.rerun()
