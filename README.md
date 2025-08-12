@@ -186,7 +186,7 @@ streamlit run app.py
 
 ### Configuration
 Edit `config.py` to customize:
-- File size limits (default: 100MB)
+- File size limits (default: 200MB)
 - Quality thresholds
 - Model preferences
 - Prompts
